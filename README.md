@@ -86,6 +86,22 @@ Additional figures include formula trees, factor-lab charts, transaction-cost
 tables, industry-neutral tests, and validation heatmaps. See
 `results/formal/`, `results/final/`, and `results/llm_factors_final/`.
 
+### Example factor: `persistent_mispricing_disc`
+
+Economic rationale: persistent mispricing is more credible when it is not
+paired with persistent equity issuance. The factor therefore rewards firms with
+durable mispricing signals and penalizes firms that repeatedly issue equity:
+
+`RANK(TS_MEAN($mispricing_perf, 6) + TS_MEAN($mispricing_mgmt, 6)) - RANK(TS_MEAN($eqnetis_at, 12))`
+
+Formula tree:
+
+![persistent_mispricing_disc formula tree](results/formal/survivors_chain/reports_formula_trees/persistent_mispricing_disc.png)
+
+Backtest / validation diagnostic:
+
+![persistent_mispricing_disc factor-lab backtest](results/formal/survivors_chain/1_factor_lab/persistent_mispricing_disc.png)
+
 ---
 
 ## Why this is a contribution
