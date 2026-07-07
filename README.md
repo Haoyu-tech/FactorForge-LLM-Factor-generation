@@ -269,12 +269,23 @@ endpoint (an Anthropic Claude example is in `QuantaAlpha/.env.claude.example`).
 
 ## Method note: reusing QuantaAlpha without qlib
 
-QuantaAlpha's operator library (`function_lib.py`) and parser (`expr_parser.py`)
-are pure pandas/numpy — the only qlib coupling is the data loader. The panel uses
-a MultiIndex `(datetime, instrument)`: cross-sectional operators (`RANK`,
+This project builds on the open-source
+[QuantaAlpha](https://github.com/QuantaAlpha/QuantaAlpha) framework
+([Han et al., 2026](https://arxiv.org/abs/2602.07085)) for the expression
+grammar, parser, operator semantics, and LLM-mining interface. QuantaAlpha's
+operator library (`function_lib.py`) and parser (`expr_parser.py`) are pure
+pandas/numpy — the only qlib coupling is the data loader. The panel uses a
+MultiIndex `(datetime, instrument)`: cross-sectional operators (`RANK`,
 `ZSCORE`, …) group by `datetime`; time-series operators (`TS_*`, `DELAY`, …)
-group by `instrument`; at monthly frequency all window units are months. Swapping
-in `sp500_loader.py` decouples the whole grammar from qlib.
+group by `instrument`; at monthly frequency all window units are months.
+Swapping in `sp500_loader.py` decouples the grammar from qlib and lets the same
+factor language run on a WRDS/CRSP/Kelly S&P 500 monthly panel.
+
+The main empirical contribution here is not a new parser or symbolic grammar;
+it is the asset-pricing validation layer around LLM-generated hypotheses:
+point-in-time US large-cap data, locked discovery/OOS split, value-weighted
+FF5+UMD alphas, spanning tests, walk-forward validation, Fama-MacBeth
+regressions, transaction-cost checks, and a GP horse race under the same grammar.
 
 ---
 
@@ -302,12 +313,26 @@ in `sp500_loader.py` decouples the whole grammar from qlib.
 
 ## Related work
 
-AlphaAgent (KDD 2025), Alpha-GPT / Alpha-GPT 2.0, Chain-of-Alpha, FactorMAD,
-and the FITEE 2025 survey on LLM-based alpha mining; mechanical baselines
-AlphaGen (RL) and AlphaForge; paradigm ancestors FunSearch / AlphaEvolve. This
-project's distinguishing angle is asset-pricing rigor + a US-monthly large-cap
-setting + an auditable discovery protocol, rather than CS-conference IC/ICIR
-backtest metrics on China/daily/qlib data.
+This project directly reuses and cites QuantaAlpha:
+
+```bibtex
+@misc{han2026quantaalphaevolutionaryframeworkllmdriven,
+      title={QuantaAlpha: An Evolutionary Framework for LLM-Driven Alpha Mining},
+      author={Jun Han and Shuo Zhang and Wei Li and Zhi Yang and Yifan Dong and Tu Hu and Jialuo Yuan and Xiaomin Yu and Yumo Zhu and Fangqi Lou and Xin Guo and Zhaowei Liu and Tianyi Jiang and Ruichuan An and Jingping Liu and Biao Wu and Rongze Chen and Kunyi Wang and Yifan Wang and Sen Hu and Xinbing Kong and Liwen Zhang and Ronghao Chen and Huacan Wang},
+      year={2026},
+      eprint={2602.07085},
+      archivePrefix={arXiv},
+      primaryClass={q-fin.ST},
+      url={https://arxiv.org/abs/2602.07085},
+}
+```
+
+Other related work includes AlphaAgent (KDD 2025), Alpha-GPT / Alpha-GPT 2.0,
+Chain-of-Alpha, FactorMAD, and the FITEE 2025 survey on LLM-based alpha mining;
+mechanical baselines AlphaGen (RL) and AlphaForge; and paradigm ancestors
+FunSearch / AlphaEvolve. This project's distinguishing angle is asset-pricing
+rigor + a US-monthly large-cap setting + an auditable discovery protocol, rather
+than CS-conference IC/ICIR backtest metrics on China/daily/qlib data.
 
 ---
 
