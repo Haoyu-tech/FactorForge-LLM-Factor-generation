@@ -14,7 +14,11 @@ The central design principle is **auditability**: the LLM is used as a
 *disciplined economic hypothesis generator*, not as a black-box return
 predictor. Candidate generation is separated from validation by an append-only
 ledger, a locked discovery/OOS split, and a common expression grammar shared by
-the LLM and a mechanical genetic-programming baseline.
+the LLM and a mechanical genetic-programming baseline. This makes the comparison
+deliberately sharp: GP is a powerful but largely hard-to-interpret symbolic
+search procedure, while the LLM is asked to reason from a financial framework
+(mispricing, financing frictions, quality, investment discipline, limits to
+arbitrage) and then submit those ideas to the same empirical gate.
 
 ---
 
@@ -30,7 +34,10 @@ LLM in-sample** (higher selection-window RankIC) yet its winner **collapses
 out-of-sample and fails the gate**, while the LLM's economically-motivated
 mispricing/financing-discipline factors **pass the full+OOS gate**. The LLM's
 edge is not higher IC — it is producing factors whose economic prior makes them
-robust to rigorous OOS scrutiny.
+robust to rigorous OOS scrutiny. In that sense, this project studies two
+different discovery modes: GP performs mechanical factor mining over formulas;
+the LLM proposes interpretable financial hypotheses and then lets the validation
+system decide whether the hypothesis deserves to survive.
 
 ---
 
@@ -61,6 +68,26 @@ stay in the ledger.
 
 ---
 
+## Visual evidence
+
+Key visual artifacts are committed under `results/` so the GitHub repository is
+not only code-first but also audit-first:
+
+![LLM vs GP horse race](results/formal/horse_race_scatter.png)
+
+The GP lineage tree below shows why the baseline is useful but difficult to
+interpret: the search path can optimize a symbolic expression efficiently, yet
+the economic mechanism is opaque compared with an LLM-generated factor that is
+named, justified, decomposed, and then tested.
+
+![GP lineage tree](results/formal/horse_race/gp_trees/lineage_tree.png)
+
+Additional figures include formula trees, factor-lab charts, transaction-cost
+tables, industry-neutral tests, and validation heatmaps. See
+`results/formal/`, `results/final/`, and `results/llm_factors_final/`.
+
+---
+
 ## Why this is a contribution
 
 "Use an LLM to synthesize formulaic factors" is by now an established subfield
@@ -87,12 +114,17 @@ project targets. See `docs/PAPER_DRAFT.md` for the working paper.
    *identical* expression parser, operator set, and field pool
    (`grammar.leaf_fields`), so the comparison isolates "economic synthesis" from
    "brute-force symbolic search."
-4. **Discovery-prompt policy (frozen).** The discovery prompt contains exactly
+4. **Interpretability is a first-class constraint.** GP is intentionally allowed
+   to be a strong, hard-searching opponent, but its discovered expressions can
+   be economically brittle and difficult to explain. The LLM route is different:
+   each formula is tied to a financial story before testing, and that story must
+   remain visible in the ledger and reports.
+5. **Discovery-prompt policy (frozen).** The discovery prompt contains exactly
    three parts and nothing else: (a) data/rules description, (b) field list,
    (c) operator glossary. **No worked example factors and no in-sample
    performance numbers** — both would leak winners and anchor the LLM's
    structure, opening data-snooping attack surfaces. See `PROJECT_STATE.md`.
-5. **Economic rationale required.** Each candidate must carry an economic
+6. **Economic rationale required.** Each candidate must carry an economic
    mechanism (mispricing, limits to arbitrage, financing/investment discipline,
    quality, risk, underreaction) *before* it is evaluated OOS.
 
@@ -235,6 +267,16 @@ in `sp500_loader.py` decouples the whole grammar from qlib.
 - ✅ Data base, adapter, and full asset-pricing evaluation suite complete.
 - ✅ Formal run + robustness (spanning zoo, transaction costs, industry-neutral)
   in `results/formal/`; horse race reconfirmed on the expanded 124-field pool.
+- ✅ Key visualizations are committed to GitHub under `results/`, including the
+  LLM-vs-GP horse-race scatter, GP lineage tree, formula trees, and factor-lab
+  diagnostic plots.
+- ⚠️ Compute-scope note: this public release demonstrates only a small subset of
+  the available operator and transformation space. The grammar supports many
+  more combinations, but a complete search over all operators, windows,
+  interactions, and field combinations is computationally expensive. Current
+  results should therefore be read as a disciplined proof-of-concept and
+  validation framework, not as an exhaustive enumeration of the full symbolic
+  factor universe.
 - ⏳ Toward submission: multi-model LLM pool (primary + 2 robustness models,
   300-candidate budget), budget-matched GP baseline, q-factor / DHS benchmarks
   + GRS test, Deflated Sharpe with the full candidate-SR distribution, and a
