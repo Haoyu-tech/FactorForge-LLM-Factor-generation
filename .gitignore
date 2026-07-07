@@ -1,0 +1,29 @@
+# --- WRDS / CRSP / Compustat licensed data — never publish ---
+data/
+*.parquet
+*.parquet.zip
+
+# --- Upstream repo (clone separately; grammar/parser reused) ---
+QuantaAlpha/
+
+# --- Private thesis material ---
+*.docx
+
+# --- Secrets ---
+.env
+*.env
+!*.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

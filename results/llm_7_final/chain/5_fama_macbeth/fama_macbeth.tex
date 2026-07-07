@@ -1,0 +1,29 @@
+% requires: \usepackage{booktabs,threeparttable}
+\begin{table}[htbp]\centering
+\caption{Fama-MacBeth regressions of next-month returns on the factor and controls}
+\label{tab:fm}
+\begin{threeparttable}\footnotesize
+\begin{tabular}{lcccc}
+\toprule
+Factor & Univariate & + controls & avg $R^2$ & $T$ \\
+\midrule
+mispr\_noa\_disc & +0.229$^{***}$ (+6.99) & +0.208$^{***}$ (+7.71) & 0.109 & 647 \\
+ebitda\_value\_quality & +0.216$^{***}$ (+4.72) & +0.220$^{***}$ (+6.56) & 0.109 & 647 \\
+cash\_prof\_accrual\_quality & +0.215$^{***}$ (+6.71) & +0.199$^{***}$ (+6.42) & 0.108 & 647 \\
+quality\_bloat\_value & +0.194$^{***}$ (+5.70) & +0.194$^{***}$ (+6.58) & 0.107 & 647 \\
+issuance\_mom\_reversal & +0.255$^{***}$ (+5.11) & +0.283$^{***}$ (+7.30) & 0.109 & 647 \\
+debt\_discipline\_value & +0.173$^{***}$ (+5.49) & +0.157$^{***}$ (+5.58) & 0.106 & 647 \\
+coa\_growth\_quality & +0.192$^{***}$ (+6.10) & +0.144$^{***}$ (+5.47) & 0.105 & 647 \\
+\midrule
+\multicolumn{5}{l}{\textit{Controls-only baseline (slope, t)}} \\
+size & \multicolumn{2}{l}{-0.118$^{***}$ (-2.66)} & & \\
+bm & \multicolumn{2}{l}{+0.103$^{**}$ (+2.26)} & & \\
+mom & \multicolumn{2}{l}{+0.153$^{***}$ (+2.76)} & & \\
+beta & \multicolumn{2}{l}{-0.010 (-0.14)} & & \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}\footnotesize
+\item Monthly cross-sectional OLS; predictors z-scored each month. Slopes are monthly \% return per 1 SD. Newey-West (6 lag) $t$ in parentheses. $^{*},^{**},^{***}$: 10/5/1\%.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}

@@ -1,0 +1,36 @@
+% requires: \usepackage{booktabs,threeparttable}
+\begin{table}[htbp]\centering
+\caption{Spanning regressions: is the LLM-synthesized factor explained by its components or the Kelly anomaly zoo?}
+\label{tab:spanning}
+\begin{threeparttable}\footnotesize
+\begin{tabular}{llccc}
+\toprule
+Factor & Sample & \#comp & $\alpha$ vs components & $\alpha$ vs Kelly zoo \\
+\midrule
+cash\_prof\_accrual\_quality & full & 3 & +2.8$^{**}$ (+2.57) & +5.8$^{***}$ (+4.18) \\
+cash\_prof\_accrual\_quality & oos & 3 & +3.2$^{**}$ (+2.01) & +3.4$^{**}$ (+2.24) \\
+pead\_earnings\_revenue\_surprise & full & 3 & +3.7$^{***}$ (+3.28) & +5.5$^{***}$ (+2.74) \\
+pead\_earnings\_revenue\_surprise & oos & 3 & +3.6$^{*}$ (+1.81) & +3.6 (+1.31) \\
+ev\_value\_cash\_profitability & full & 3 & +0.9 (+0.78) & +1.9 (+1.64) \\
+ev\_value\_cash\_profitability & oos & 3 & +1.9 (+1.13) & +2.1 (+1.24) \\
+low\_duration\_quality & full & 3 & -1.5 (-1.05) & +1.4 (+0.81) \\
+low\_duration\_quality & oos & 3 & -2.2 (-1.10) & +1.8 (+0.70) \\
+profitability\_minus\_lottery & full & 3 & +2.9$^{**}$ (+2.44) & +3.0$^{**}$ (+2.28) \\
+profitability\_minus\_lottery & oos & 3 & +2.9$^{*}$ (+1.75) & +4.1$^{**}$ (+2.36) \\
+accrual\_investment\_discipline & full & 3 & +0.8 (+0.68) & +1.9 (+1.03) \\
+accrual\_investment\_discipline & oos & 3 & -0.4 (-0.24) & -1.5 (-0.56) \\
+distress\_adjusted\_value & full & 3 & +0.9 (+0.63) & +3.2$^{**}$ (+1.98) \\
+distress\_adjusted\_value & oos & 3 & +1.9 (+1.09) & +4.3$^{*}$ (+1.95) \\
+shareholder\_yield\_quality & full & 3 & +2.0$^{*}$ (+1.73) & +5.5$^{***}$ (+3.25) \\
+shareholder\_yield\_quality & oos & 3 & +4.1$^{**}$ (+2.26) & +4.7$^{**}$ (+2.36) \\
+earnings\_streak\_momentum & full & 3 & +1.6 (+1.32) & +6.8$^{***}$ (+3.47) \\
+earnings\_streak\_momentum & oos & 3 & +2.4 (+1.37) & +2.1 (+0.62) \\
+quality\_bloat\_value & full & 4 & +2.3$^{**}$ (+2.07) & +6.9$^{***}$ (+4.53) \\
+quality\_bloat\_value & oos & 4 & +1.2 (+0.73) & +7.9$^{***}$ (+3.80) \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}\footnotesize
+\item Annualized intercept (\%) from regressing the factor's VW long-short return on the long-short returns of the spanning set. Newey-West (6 lag) $t$-statistics in parentheses. $^{*},^{**},^{***}$: 10/5/1\%. A significant intercept indicates return not spanned by (i.e. incremental to) the spanning factors.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}

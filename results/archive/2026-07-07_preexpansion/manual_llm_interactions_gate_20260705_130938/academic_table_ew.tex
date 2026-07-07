@@ -1,0 +1,47 @@
+% requires: \usepackage{booktabs,threeparttable}
+\begin{table}[htbp]\centering
+\caption{Risk-adjusted performance of LLM-mined factors (equal-weighted long-short)}
+\label{tab:alphas_ew}
+\begin{threeparttable}\footnotesize
+\begin{tabular}{lcccccc}
+\toprule
+ & Mean LS & \multicolumn{5}{c}{Annualized alpha (\%)} \\
+\cmidrule(lr){3-7}
+Factor & (ann \%) & CAPM & FF3 & Carhart4 & FF5 & FF5+UMD \\
+\midrule
+\multicolumn{7}{l}{\textit{Panel A: Full sample}} \\
+\addlinespace
+mispricing\_trend\_discipline & +9.5 & +9.6$^{***}$ & +9.7$^{***}$ & +9.9$^{***}$ & +9.3$^{***}$ & +9.4$^{***}$ \\
+ & (+5.88) & (+5.93) & (+6.00) & (+5.31) & (+5.66) & (+5.03) \\
+\addlinespace
+issuance\_trend\_reversal & +9.8 & +10.2$^{***}$ & +10.4$^{***}$ & +10.0$^{***}$ & +10.6$^{***}$ & +10.3$^{***}$ \\
+ & (+4.55) & (+4.90) & (+5.04) & (+3.93) & (+4.83) & (+3.86) \\
+\addlinespace
+risk\_adjusted\_fin\_disc & +8.0 & +8.6$^{***}$ & +8.7$^{***}$ & +8.8$^{***}$ & +8.2$^{***}$ & +8.3$^{***}$ \\
+ & (+3.02) & (+3.33) & (+3.33) & (+2.85) & (+3.06) & (+2.63) \\
+\addlinespace
+investment\_quality\_ratio & +10.3 & +10.1$^{***}$ & +9.8$^{***}$ & +10.2$^{***}$ & +8.8$^{***}$ & +9.2$^{***}$ \\
+ & (+4.30) & (+4.09) & (+4.06) & (+3.81) & (+3.86) & (+3.68) \\
+\addlinespace
+\midrule
+\multicolumn{7}{l}{\textit{Panel B: Out-of-sample (post-2000-12-31)}} \\
+\addlinespace
+mispricing\_trend\_discipline & +8.2 & +8.6$^{***}$ & +8.6$^{***}$ & +8.6$^{***}$ & +7.4$^{***}$ & +7.5$^{***}$ \\
+ & (+2.89) & (+3.12) & (+3.20) & (+3.04) & (+2.94) & (+2.89) \\
+\addlinespace
+issuance\_trend\_reversal & +4.4 & +5.2 & +5.2 & +5.1 & +4.7 & +4.7 \\
+ & (+1.18) & (+1.49) & (+1.50) & (+1.30) & (+1.34) & (+1.26) \\
+\addlinespace
+risk\_adjusted\_fin\_disc & +6.4 & +7.2 & +7.1 & +7.4 & +5.2 & +5.4 \\
+ & (+1.32) & (+1.54) & (+1.53) & (+1.47) & (+1.14) & (+1.13) \\
+\addlinespace
+investment\_quality\_ratio & +7.4 & +7.8$^{**}$ & +7.8$^{**}$ & +8.1$^{**}$ & +6.5$^{**}$ & +6.7$^{**}$ \\
+ & (+2.24) & (+2.40) & (+2.48) & (+2.41) & (+2.11) & (+2.18) \\
+\addlinespace
+\bottomrule
+\end{tabular}
+\begin{tablenotes}\footnotesize
+\item Long-short = top-minus-bottom decile (equal-weighted), monthly rebalanced. Newey-West (6 lag) $t$-statistics in parentheses. $^{*}$, $^{**}$, $^{***}$ denote significance at the 10\%, 5\%, 1\% levels.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}

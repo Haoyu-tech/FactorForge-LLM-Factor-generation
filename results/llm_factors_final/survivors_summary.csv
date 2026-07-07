@@ -1,0 +1,6 @@
+factor,structure,VW_a_t_full,VW_a_t_oos,zoo_t_full,zoo_t_oos,walk_pct_pos,HLZ_t3,FM_t
+cash_prof_accrual_quality,rank-sum,4.82,2.71,4.18,2.24,83%,True,6.42
+quality_bloat_value,rank-sum,3.67,2.79,4.53,3.8,100%,True,6.58
+shareholder_yield_quality,rank-sum,3.22,2.58,3.25,2.36,92%,True,6.9
+earnings_yield_stability,ratio /,3.27,2.49,2.74,2.59,92%,True,6.16
+persistent_mispricing_disc,time-series TS_*,4.02,2.64,3.07,2.19,92%,True,6.37

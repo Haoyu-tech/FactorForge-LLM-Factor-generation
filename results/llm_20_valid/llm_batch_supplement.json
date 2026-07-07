@@ -1,0 +1,15 @@
+{
+  "_note": "Supplementary LLM candidates = close variants of the proven gate-passing mechanisms, to top up to 20.",
+  "factors": [
+    {"name": "mispr_fin_disc_op", "expression": "RANK($mispricing_perf) + RANK($mispricing_mgmt) - RANK($eqnetis_at) - RANK($at_gr1) + RANK($op_at)", "rationale": "Mispricing reversal with financing and investment discipline, reinforced by operating profitability."},
+    {"name": "mispr_sale_growth_disc", "expression": "RANK($mispricing_perf) + RANK($mispricing_mgmt) - RANK($eqnetis_at) - RANK($sale_gr1)", "rationale": "Mispricing combined with low issuance and restrained sales growth (revenue-side overexpansion)."},
+    {"name": "cashprof_taccruals_disc", "expression": "RANK($cop_at) - RANK($taccruals_at) - RANK($eqnetis_at)", "rationale": "Cash profitability with low total accruals and disciplined issuance = high-quality real earnings."},
+    {"name": "ev_value_ebit_disc", "expression": "RANK($ebit_bev) + RANK($gp_at) - RANK($eqnetis_at) - RANK($at_gr1)", "rationale": "Enterprise-multiple value with gross profitability, financing and investment discipline."},
+    {"name": "sale_bev_cashprof_disc", "expression": "RANK($sale_bev) + RANK($cop_at) - RANK($at_gr1)", "rationale": "Sales to book-enterprise-value with cash profitability and low asset growth."},
+    {"name": "issuance_resff_reversal", "expression": "-RANK($eqnetis_at) - RANK($dbnetis_at) + RANK($resff3_12_1) - RANK($ret_1_0)", "rationale": "Financing discipline with FF3-residual momentum, guarded against short-term reversal."},
+    {"name": "financing_disc_prof_value", "expression": "-RANK($dbnetis_at) - RANK($eqnetis_at) + RANK($cop_at) + RANK($be_me)", "rationale": "Broad equity+debt financing discipline with cash profitability and value."},
+    {"name": "mispr_perf_accrual_quality", "expression": "RANK($mispricing_perf) - RANK($oaccruals_at) - RANK($eqnetis_at) + RANK($gp_at)", "rationale": "Performance mispricing cluster with low accruals, low issuance, and profitability support."},
+    {"name": "opasset_growth_cashprof", "expression": "-RANK($coa_gr1a) - RANK($ncoa_gr1a) + RANK($cop_at)", "rationale": "Growth in current and non-current operating assets are overinvestment signals; cash profitability offsets them."},
+    {"name": "mispr_noa_quality", "expression": "RANK($mispricing_perf) + RANK($mispricing_mgmt) - RANK($noa_at) - RANK($at_gr1) + RANK($op_at)", "rationale": "Mispricing with low bloat and investment discipline, supported by operating profitability."}
+  ]
+}

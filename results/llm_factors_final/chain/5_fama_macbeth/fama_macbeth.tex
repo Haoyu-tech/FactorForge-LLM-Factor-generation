@@ -1,0 +1,32 @@
+% requires: \usepackage{booktabs,threeparttable}
+\begin{table}[htbp]\centering
+\caption{Fama-MacBeth regressions of next-month returns on the factor and controls}
+\label{tab:fm}
+\begin{threeparttable}\footnotesize
+\begin{tabular}{lcccc}
+\toprule
+Factor & Univariate & + controls & avg $R^2$ & $T$ \\
+\midrule
+cash\_prof\_accrual\_quality & +0.215$^{***}$ (+6.71) & +0.199$^{***}$ (+6.42) & 0.108 & 647 \\
+pead\_earnings\_revenue\_surprise & +0.099$^{***}$ (+2.68) & +0.121$^{***}$ (+4.03) & 0.107 & 647 \\
+ev\_value\_cash\_profitability & +0.174$^{***}$ (+5.56) & +0.200$^{***}$ (+6.32) & 0.106 & 647 \\
+low\_duration\_quality & +0.098 (+1.42) & +0.210$^{***}$ (+4.47) & 0.109 & 647 \\
+profitability\_minus\_lottery & +0.087 (+1.35) & +0.195$^{***}$ (+5.17) & 0.107 & 647 \\
+accrual\_investment\_discipline & +0.196$^{***}$ (+5.81) & +0.154$^{***}$ (+5.06) & 0.106 & 647 \\
+distress\_adjusted\_value & +0.076 (+1.57) & +0.101$^{***}$ (+3.28) & 0.107 & 647 \\
+shareholder\_yield\_quality & +0.225$^{***}$ (+6.04) & +0.204$^{***}$ (+6.90) & 0.108 & 647 \\
+earnings\_streak\_momentum & +0.133$^{***}$ (+2.60) & +0.205$^{***}$ (+5.51) & 0.108 & 647 \\
+quality\_bloat\_value & +0.194$^{***}$ (+5.70) & +0.194$^{***}$ (+6.58) & 0.107 & 647 \\
+\midrule
+\multicolumn{5}{l}{\textit{Controls-only baseline (slope, t)}} \\
+size & \multicolumn{2}{l}{-0.118$^{***}$ (-2.66)} & & \\
+bm & \multicolumn{2}{l}{+0.103$^{**}$ (+2.26)} & & \\
+mom & \multicolumn{2}{l}{+0.153$^{***}$ (+2.76)} & & \\
+beta & \multicolumn{2}{l}{-0.010 (-0.14)} & & \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}\footnotesize
+\item Monthly cross-sectional OLS; predictors z-scored each month. Slopes are monthly \% return per 1 SD. Newey-West (6 lag) $t$ in parentheses. $^{*},^{**},^{***}$: 10/5/1\%.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}

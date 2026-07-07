@@ -1,0 +1,65 @@
+% requires: \usepackage{booktabs,threeparttable}
+\begin{table}[htbp]\centering
+\caption{Risk-adjusted performance of LLM-mined factors (equal-weighted long-short)}
+\label{tab:alphas_ew}
+\begin{threeparttable}\footnotesize
+\begin{tabular}{lcccccc}
+\toprule
+ & Mean LS & \multicolumn{5}{c}{Annualized alpha (\%)} \\
+\cmidrule(lr){3-7}
+Factor & (ann \%) & CAPM & FF3 & Carhart4 & FF5 & FF5+UMD \\
+\midrule
+\multicolumn{7}{l}{\textit{Panel A: Full sample}} \\
+\addlinespace
+mispr\_noa\_disc & +9.7 & +10.0$^{***}$ & +10.1$^{***}$ & +9.8$^{***}$ & +9.7$^{***}$ & +9.4$^{***}$ \\
+ & (+6.62) & (+6.73) & (+6.87) & (+5.96) & (+6.50) & (+5.68) \\
+\addlinespace
+ebitda\_value\_quality & +9.5 & +9.9$^{***}$ & +10.0$^{***}$ & +10.1$^{***}$ & +9.0$^{***}$ & +9.2$^{***}$ \\
+ & (+4.64) & (+4.79) & (+4.86) & (+4.59) & (+5.03) & (+4.67) \\
+\addlinespace
+cash\_prof\_accrual\_quality & +9.5 & +10.1$^{***}$ & +10.4$^{***}$ & +10.1$^{***}$ & +10.4$^{***}$ & +10.2$^{***}$ \\
+ & (+6.11) & (+6.54) & (+6.68) & (+6.35) & (+6.62) & (+6.32) \\
+\addlinespace
+quality\_bloat\_value & +9.2 & +9.6$^{***}$ & +9.4$^{***}$ & +9.2$^{***}$ & +9.0$^{***}$ & +8.8$^{***}$ \\
+ & (+5.88) & (+6.18) & (+6.06) & (+5.79) & (+5.97) & (+5.64) \\
+\addlinespace
+issuance\_mom\_reversal & +11.2 & +11.7$^{***}$ & +11.9$^{***}$ & +11.7$^{***}$ & +12.0$^{***}$ & +11.8$^{***}$ \\
+ & (+5.05) & (+5.48) & (+5.62) & (+4.50) & (+5.33) & (+4.34) \\
+\addlinespace
+debt\_discipline\_value & +9.1 & +9.6$^{***}$ & +9.6$^{***}$ & +9.8$^{***}$ & +9.6$^{***}$ & +9.8$^{***}$ \\
+ & (+6.10) & (+6.28) & (+6.01) & (+6.02) & (+5.91) & (+5.96) \\
+\addlinespace
+coa\_growth\_quality & +8.3 & +8.4$^{***}$ & +8.3$^{***}$ & +8.6$^{***}$ & +8.5$^{***}$ & +8.8$^{***}$ \\
+ & (+5.83) & (+5.89) & (+5.83) & (+5.69) & (+5.72) & (+5.59) \\
+\addlinespace
+\midrule
+\multicolumn{7}{l}{\textit{Panel B: Out-of-sample (post-2000-12-31)}} \\
+\addlinespace
+mispr\_noa\_disc & +8.4 & +9.3$^{***}$ & +9.3$^{***}$ & +9.1$^{***}$ & +8.7$^{***}$ & +8.6$^{***}$ \\
+ & (+3.42) & (+3.84) & (+3.96) & (+3.73) & (+3.69) & (+3.60) \\
+\addlinespace
+ebitda\_value\_quality & +8.2 & +9.3$^{***}$ & +9.4$^{***}$ & +9.5$^{***}$ & +7.7$^{***}$ & +7.8$^{***}$ \\
+ & (+2.56) & (+3.09) & (+3.14) & (+3.09) & (+2.90) & (+2.91) \\
+\addlinespace
+cash\_prof\_accrual\_quality & +5.8 & +6.9$^{***}$ & +7.0$^{***}$ & +6.9$^{***}$ & +6.7$^{***}$ & +6.7$^{***}$ \\
+ & (+2.28) & (+2.79) & (+2.95) & (+2.88) & (+2.80) & (+2.76) \\
+\addlinespace
+quality\_bloat\_value & +7.5 & +8.5$^{***}$ & +8.5$^{***}$ & +8.3$^{***}$ & +7.3$^{***}$ & +7.3$^{***}$ \\
+ & (+2.88) & (+3.44) & (+3.51) & (+3.40) & (+3.17) & (+3.12) \\
+\addlinespace
+issuance\_mom\_reversal & +4.9 & +5.9$^{*}$ & +5.9$^{*}$ & +6.1 & +5.3 & +5.4 \\
+ & (+1.28) & (+1.66) & (+1.67) & (+1.51) & (+1.46) & (+1.39) \\
+\addlinespace
+debt\_discipline\_value & +5.2 & +6.0$^{***}$ & +6.0$^{***}$ & +6.4$^{***}$ & +6.1$^{**}$ & +6.2$^{***}$ \\
+ & (+2.40) & (+2.62) & (+2.67) & (+2.80) & (+2.54) & (+2.61) \\
+\addlinespace
+coa\_growth\_quality & +4.6 & +4.6$^{**}$ & +4.7$^{**}$ & +4.8$^{**}$ & +5.3$^{**}$ & +5.3$^{**}$ \\
+ & (+2.04) & (+2.10) & (+2.13) & (+2.19) & (+2.33) & (+2.35) \\
+\addlinespace
+\bottomrule
+\end{tabular}
+\begin{tablenotes}\footnotesize
+\item Long-short = top-minus-bottom decile (equal-weighted), monthly rebalanced. Newey-West (6 lag) $t$-statistics in parentheses. $^{*}$, $^{**}$, $^{***}$ denote significance at the 10\%, 5\%, 1\% levels.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}

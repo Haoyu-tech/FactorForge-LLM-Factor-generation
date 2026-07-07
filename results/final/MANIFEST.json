@@ -1,0 +1,345 @@
+{
+  "schema_version": 1,
+  "run_name": "consolidated_evaluation",
+  "created_at_utc": "2026-07-06T10:48:21+00:00",
+  "project_root": "D:\\桌面文件\\文章\\LLM-Factor",
+  "git_commit": null,
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "cwd": "D:\\桌面文件\\文章\\LLM-Factor",
+  "config": {
+    "schema_version": 1,
+    "project": {
+      "name": "LLM-Factor",
+      "description": "LLM-guided factor mining on a WRDS S&P 500 monthly panel"
+    },
+    "paths": {
+      "wrds_root": {
+        "env": "LLM_FACTOR_WRDS_ROOT",
+        "default": "D:/桌面文件/US stock research/wrds",
+        "kind": "external"
+      },
+      "sp500_constituents_zip": {
+        "env": "LLM_FACTOR_SP500_CONSTITUENTS_ZIP",
+        "default": "D:/桌面文件/US stock research/wrds/CRSP/Index - Version 2/S&P 500 Index Constituents.zip",
+        "kind": "external"
+      },
+      "kelly_us_sample": {
+        "env": "LLM_FACTOR_KELLY_US_SAMPLE",
+        "default": "D:/桌面文件/US stock research/wrds/kelly_us_sample.parquet",
+        "kind": "external"
+      },
+      "kelly153": {
+        "env": "LLM_FACTOR_KELLY153",
+        "default": "C:/Users/a/AppData/Local/Temp/claude/d----------LLM-Factor/ca6e8407-87c2-470c-a787-05ea5e339b93/scratchpad/kelly153.parquet",
+        "kind": "external"
+      },
+      "fama_french_ff5_momentum": {
+        "env": "LLM_FACTOR_FF5_MOMENTUM",
+        "default": "D:/桌面文件/US stock research/wrds/CRSP/FamaFactor/5 Factors Plus Momentum - Monthly Frequency.zip",
+        "kind": "external"
+      },
+      "panel": {
+        "env": "SP500_PANEL",
+        "default": "data/sp500_monthly_kelly.parquet",
+        "kind": "project"
+      },
+      "membership_panel": {
+        "default": "data/sp500_membership.parquet",
+        "kind": "project"
+      },
+      "pv_panel": {
+        "default": "data/sp500_monthly_pv.parquet",
+        "kind": "project"
+      },
+      "legacy_panel": {
+        "default": "data/sp500_monthly.parquet",
+        "kind": "project"
+      },
+      "results_root": {
+        "env": "LLM_FACTOR_RESULTS_ROOT",
+        "default": "results",
+        "kind": "project"
+      },
+      "run_root": {
+        "env": "LLM_FACTOR_RUN_ROOT",
+        "default": "results/runs",
+        "kind": "project"
+      },
+      "candidate_ledger_root": {
+        "env": "LLM_FACTOR_LEDGER_ROOT",
+        "default": "results/candidate_ledgers",
+        "kind": "project"
+      }
+    },
+    "sample": {
+      "start": "1972-07-01",
+      "split": "2000-12-31",
+      "walk_forward_first_oos": "1990-01-01",
+      "walk_forward_step_years": 3
+    },
+    "evaluation": {
+      "primary_model": "FF5+UMD",
+      "newey_west_lags": 6,
+      "deciles": 10,
+      "pass_alpha_t": 1.96,
+      "hlz_t_threshold": 3.0
+    },
+    "search": {
+      "default_rounds": 3,
+      "default_per_round": 6,
+      "default_top_k": 8,
+      "default_full_trials": 300,
+      "default_seed": 0,
+      "primary_grammar": "fast_full"
+    },
+    "operator_grammars": {
+      "rank_sum": {
+        "description": "Signed sums of cross-sectional ranks; fast transparent baseline.",
+        "top_wrapper": "RANK",
+        "cross_sectional_unary": [
+          "RANK"
+        ],
+        "time_series_unary": [],
+        "math_unary": [],
+        "binary": [
+          "+",
+          "-"
+        ],
+        "windows": [],
+        "max_terms": 4,
+        "leaf_fields": [
+          "$ret_1_0",
+          "$ret_6_1",
+          "$ret_12_1",
+          "$ret_12_7",
+          "$resff3_12_1",
+          "$be_me",
+          "$at_me",
+          "$ni_me",
+          "$sale_me",
+          "$bev_mev",
+          "$eqnpo_12m",
+          "$gp_at",
+          "$op_at",
+          "$ni_be",
+          "$at_turnover",
+          "$qmj_prof",
+          "$at_gr1",
+          "$sale_gr1",
+          "$noa_at",
+          "$chcsho_12m",
+          "$eqnetis_at",
+          "$dbnetis_at",
+          "$qmj_safety",
+          "$z_score",
+          "$beta_60m",
+          "$ivol_ff3_21d",
+          "$rmax5_21d",
+          "$betadown_252d",
+          "$rvol_21d",
+          "$turnover_126d",
+          "$ami_126d",
+          "$dolvol_126d",
+          "$bidaskhl_21d",
+          "$prc_highprc_252d",
+          "$seas_1_1na",
+          "$mispricing_perf",
+          "$mispricing_mgmt"
+        ]
+      },
+      "fast_full": {
+        "description": "Main fair-comparison grammar shared by LLM and GP.",
+        "top_wrapper": "RANK",
+        "cross_sectional_unary": [
+          "RANK",
+          "ZSCORE",
+          "SCALE"
+        ],
+        "time_series_unary": [
+          "TS_MEAN",
+          "TS_STD",
+          "TS_ZSCORE",
+          "TS_MAX",
+          "TS_MIN",
+          "TS_SUM",
+          "DELTA",
+          "DELAY",
+          "TS_PCTCHANGE"
+        ],
+        "math_unary": [
+          "ABS",
+          "SIGN"
+        ],
+        "binary": [
+          "+",
+          "-",
+          "*",
+          "/"
+        ],
+        "windows": [
+          3,
+          6,
+          12,
+          24,
+          36
+        ],
+        "max_terms": 3,
+        "leaf_fields": [
+          "$ret_1_0",
+          "$ret_6_1",
+          "$ret_12_1",
+          "$ret_12_7",
+          "$resff3_12_1",
+          "$be_me",
+          "$at_me",
+          "$ni_me",
+          "$sale_me",
+          "$bev_mev",
+          "$eqnpo_12m",
+          "$gp_at",
+          "$op_at",
+          "$ni_be",
+          "$at_turnover",
+          "$qmj_prof",
+          "$at_gr1",
+          "$sale_gr1",
+          "$noa_at",
+          "$chcsho_12m",
+          "$eqnetis_at",
+          "$dbnetis_at",
+          "$qmj_safety",
+          "$z_score",
+          "$beta_60m",
+          "$ivol_ff3_21d",
+          "$rmax5_21d",
+          "$betadown_252d",
+          "$rvol_21d",
+          "$turnover_126d",
+          "$ami_126d",
+          "$dolvol_126d",
+          "$bidaskhl_21d",
+          "$prc_highprc_252d",
+          "$seas_1_1na",
+          "$mispricing_perf",
+          "$mispricing_mgmt",
+          "$close",
+          "$volume",
+          "$return",
+          "$me"
+        ]
+      },
+      "full_llm": {
+        "description": "Extended LLM-only grammar for appendix experiments; not the main horse-race grammar.",
+        "top_wrapper": "RANK",
+        "cross_sectional_unary": [
+          "RANK",
+          "ZSCORE",
+          "SCALE",
+          "MEAN",
+          "STD",
+          "MEDIAN",
+          "MAX",
+          "MIN",
+          "SKEW",
+          "KURT"
+        ],
+        "time_series_unary": [
+          "TS_MEAN",
+          "TS_STD",
+          "TS_RANK",
+          "TS_ZSCORE",
+          "TS_MAX",
+          "TS_MIN",
+          "TS_SUM",
+          "TS_MEDIAN",
+          "DELAY",
+          "DELTA",
+          "TS_PCTCHANGE",
+          "TS_SKEW",
+          "TS_KURT"
+        ],
+        "time_series_binary": [
+          "TS_CORR"
+        ],
+        "math_unary": [
+          "ABS",
+          "LOG",
+          "SQRT",
+          "EXP",
+          "SIGN"
+        ],
+        "math_binary": [
+          "POW"
+        ],
+        "binary": [
+          "+",
+          "-",
+          "*",
+          "/"
+        ],
+        "conditional": [
+          "WHERE",
+          "GT",
+          "LT",
+          "GE",
+          "LE",
+          "EQ",
+          "NE",
+          "MIN",
+          "MAX"
+        ],
+        "windows": [
+          3,
+          6,
+          12,
+          24,
+          36
+        ],
+        "max_terms": 3,
+        "leaf_fields": "all"
+      }
+    },
+    "provenance": {
+      "candidate_ledger_required": true,
+      "manifest_required": true,
+      "record_failed_candidates": true
+    }
+  },
+  "params": {
+    "full_trials": 300,
+    "start": "1972-07-01",
+    "split": "2000-12-31",
+    "factor_set": "thesis_core",
+    "mine_target": 100,
+    "mined_gate_count": 100,
+    "manual_llm_min_ic_t": 2.0
+  },
+  "inputs": {
+    "panel": {
+      "path": "D:\\桌面文件\\文章\\LLM-Factor\\data\\sp500_monthly_kelly.parquet",
+      "exists": true,
+      "size_bytes": 108120919,
+      "sha256": "1ead7bb1372c40cf350d09830e5116d6bb0ef69ade86ce724d009114b0c40bee"
+    },
+    "membership_panel": {
+      "path": "D:\\桌面文件\\文章\\LLM-Factor\\data\\sp500_membership.parquet",
+      "exists": true,
+      "size_bytes": 47251,
+      "sha256": "e50418747c52d1c43ecd8108da9e9bfb1ddcb606c530e8c665f30d6623dfc2e8"
+    },
+    "pv_panel": {
+      "path": "D:\\桌面文件\\文章\\LLM-Factor\\data\\sp500_monthly_pv.parquet",
+      "exists": true,
+      "size_bytes": 17316899,
+      "sha256": "eff8eaffdc7d967ae9e314c87c3afc84ebeb348bd6c59b220b63e0e0e8960db6"
+    },
+    "legacy_panel": {
+      "path": "D:\\桌面文件\\文章\\LLM-Factor\\data\\sp500_monthly.parquet",
+      "exists": true,
+      "size_bytes": 52321391,
+      "sha256": "1ba05c5f67c450d68d5641402869f82f76a828a9fb7f7b9e1b212ae7b11901d2"
+    }
+  },
+  "notes": "One-shot consolidated evaluation. Previous results/final is archived before refresh."
+}

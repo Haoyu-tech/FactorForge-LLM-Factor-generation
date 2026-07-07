@@ -1,0 +1,27 @@
+% requires: \usepackage{booktabs,threeparttable}
+\begin{table}[htbp]\centering
+\caption{Fama-MacBeth regressions of next-month returns on the factor and controls}
+\label{tab:fm}
+\begin{threeparttable}\footnotesize
+\begin{tabular}{lcccc}
+\toprule
+Factor & Univariate & + controls & avg $R^2$ & $T$ \\
+\midrule
+mispr\_fin\_disc & +0.227$^{***}$ (+6.24) & +0.184$^{***}$ (+6.65) & 0.108 & 641 \\
+mispricing\_combo & +0.189$^{***}$ (+4.56) & +0.207$^{***}$ (+6.75) & 0.106 & 641 \\
+fin\_inv\_discipline & +0.191$^{***}$ (+5.01) & +0.128$^{***}$ (+4.74) & 0.108 & 641 \\
+qual\_val\_mom & +0.219$^{***}$ (+4.39) & +0.170$^{***}$ (+4.38) & 0.107 & 641 \\
+prof\_trend\_ts & +0.007 (+0.25) & +0.015 (+0.81) & 0.103 & 641 \\
+\midrule
+\multicolumn{5}{l}{\textit{Controls-only baseline (slope, t)}} \\
+size & \multicolumn{2}{l}{-0.121$^{***}$ (-2.74)} & & \\
+bm & \multicolumn{2}{l}{+0.104$^{**}$ (+2.28)} & & \\
+mom & \multicolumn{2}{l}{+0.147$^{***}$ (+2.62)} & & \\
+beta & \multicolumn{2}{l}{-0.007 (-0.10)} & & \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}\footnotesize
+\item Monthly cross-sectional OLS; predictors z-scored each month. Slopes are monthly \% return per 1 SD. Newey-West (6 lag) $t$ in parentheses. $^{*},^{**},^{***}$: 10/5/1\%.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}

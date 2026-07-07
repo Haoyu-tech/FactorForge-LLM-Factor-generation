@@ -1,0 +1,26 @@
+% requires: \usepackage{booktabs,threeparttable}
+\begin{table}[htbp]\centering
+\caption{Spanning regressions: is the LLM-synthesized factor explained by its components or the Kelly anomaly zoo?}
+\label{tab:spanning}
+\begin{threeparttable}\footnotesize
+\begin{tabular}{llccc}
+\toprule
+Factor & Sample & \#comp & $\alpha$ vs components & $\alpha$ vs Kelly zoo \\
+\midrule
+cash\_prof\_accrual\_quality & full & 3 & +2.8$^{**}$ (+2.57) & +3.0$^{**}$ (+2.46) \\
+cash\_prof\_accrual\_quality & oos & 3 & +3.2$^{**}$ (+2.01) & +1.8 (+1.33) \\
+shareholder\_yield\_quality & full & 3 & +2.0$^{*}$ (+1.73) & +1.0 (+0.70) \\
+shareholder\_yield\_quality & oos & 3 & +4.1$^{**}$ (+2.26) & +2.7 (+1.48) \\
+quality\_bloat\_value & full & 4 & +2.3$^{**}$ (+2.07) & +2.8$^{**}$ (+2.02) \\
+quality\_bloat\_value & oos & 4 & +1.2 (+0.73) & +3.4 (+1.64) \\
+earnings\_yield\_stability & full & 3 & +3.4$^{**}$ (+2.33) & +1.8 (+1.18) \\
+earnings\_yield\_stability & oos & 3 & +5.0$^{**}$ (+2.52) & +4.5$^{**}$ (+2.21) \\
+persistent\_mispricing\_disc & full & 3 & +2.9$^{***}$ (+2.75) & +3.0$^{**}$ (+2.54) \\
+persistent\_mispricing\_disc & oos & 3 & +4.4$^{**}$ (+2.36) & +3.9$^{**}$ (+2.25) \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}\footnotesize
+\item Annualized intercept (\%) from regressing the factor's VW long-short return on the long-short returns of the spanning set. Newey-West (6 lag) $t$-statistics in parentheses. $^{*},^{**},^{***}$: 10/5/1\%. A significant intercept indicates return not spanned by (i.e. incremental to) the spanning factors.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}

@@ -1,0 +1,105 @@
+{
+  "_note": "20 LLM-generated factors that PASS the strict factor_lab gate (VW FF5+UMD full+OOS + monotone).",
+  "factors": [
+    {
+      "name": "mispr_fin_disc",
+      "expression": "RANK($mispricing_perf) + RANK($mispricing_mgmt) - RANK($eqnetis_at) - RANK($at_gr1)",
+      "rationale": "Stambaugh-Yuan mispricing reverses more strongly among firms with restrained equity issuance and asset growth (q-theory discipline)."
+    },
+    {
+      "name": "mispr_fin_disc_quality",
+      "expression": "RANK($mispricing_perf) + RANK($mispricing_mgmt) - RANK($eqnetis_at) - RANK($at_gr1) + RANK($gp_at)",
+      "rationale": "Mispricing reversal is cleaner when supported by real gross profitability alongside financing and investment discipline."
+    },
+    {
+      "name": "mispr_noa_disc",
+      "expression": "RANK($mispricing_perf) + RANK($mispricing_mgmt) - RANK($eqnetis_at) - RANK($noa_at)",
+      "rationale": "Mispricing combined with low net operating assets (Hirshleifer bloat) and low issuance targets over-accruing over-valued firms."
+    },
+    {
+      "name": "cash_prof_accrual_quality",
+      "expression": "RANK($cop_at) - RANK($oaccruals_at) - RANK($eqnetis_at)",
+      "rationale": "Ball et al. cash-based profitability with low operating accruals (Sloan) and disciplined issuance = high-quality real earnings."
+    },
+    {
+      "name": "cashprof_lowissue_value",
+      "expression": "RANK($cop_at) + RANK($be_me) - RANK($eqnetis_at) - RANK($chcsho_12m)",
+      "rationale": "Cheap, cash-profitable firms that neither issue equity nor grow share count combine value, quality, and financing discipline."
+    },
+    {
+      "name": "ev_value_cashprof",
+      "expression": "RANK($ebit_bev) + RANK($cop_at) - RANK($at_gr1)",
+      "rationale": "Enterprise-multiple value (EBIT/book-EV) is cleaner than book-to-market for levered firms; plus cash profitability and low investment."
+    },
+    {
+      "name": "ebitda_value_quality",
+      "expression": "RANK($ebitda_mev) + RANK($qmj_prof) - RANK($eqnetis_at)",
+      "rationale": "EBITDA-to-market-EV value tilted toward quality profitability, penalizing equity issuance."
+    },
+    {
+      "name": "shareholder_yield_quality",
+      "expression": "RANK($eqnpo_me) + RANK($cop_at) - RANK($eqnetis_at)",
+      "rationale": "Net payout yield (Boudoukh) plus cash profitability, penalizing issuance: firms returning cash and generating real profits."
+    },
+    {
+      "name": "quality_bloat_value",
+      "expression": "RANK($qmj_prof) + RANK($qmj_safety) + RANK($sale_me) - RANK($noa_at)",
+      "rationale": "Asness quality (profitability + safety) tilted to cheap sales-to-price and low balance-sheet bloat (NOA anomaly)."
+    },
+    {
+      "name": "issuance_mom_reversal",
+      "expression": "-RANK($eqnetis_at) - RANK($dbnetis_at) + RANK($ret_12_1) - RANK($ret_1_0)",
+      "rationale": "Low equity and debt financing plus intermediate momentum, guarded against short-term reversal = capital discipline + underreaction."
+    },
+    {
+      "name": "persistent_mispricing_disc",
+      "expression": "RANK(TS_MEAN($mispricing_perf, 6) + TS_MEAN($mispricing_mgmt, 6)) - RANK(TS_MEAN($eqnetis_at, 12))",
+      "rationale": "Persistent (not transient) mispricing plus persistently low issuance identifies durable anomaly exposure."
+    },
+    {
+      "name": "earnings_yield_stability",
+      "expression": "RANK($ni_me / ($ni_ivol + 1)) + RANK($cop_at)",
+      "rationale": "Earnings yield scaled by earnings volatility rewards stable high-yield earners (quality of E/P), plus cash profitability."
+    },
+    {
+      "name": "mispr_profit_lowrisk",
+      "expression": "RANK($mispricing_perf) + RANK($mispricing_mgmt) + RANK($gp_at) - RANK($ivol_ff3_21d)",
+      "rationale": "Mispricing supported by profitability and concentrated in low-idio-vol, more investable names."
+    },
+    {
+      "name": "debt_discipline_value",
+      "expression": "-RANK($dbnetis_at) - RANK($debt_me) + RANK($be_me) + RANK($cop_at)",
+      "rationale": "Low debt issuance and leverage with value and cash profitability captures conservatively financed cheap firms."
+    },
+    {
+      "name": "coa_growth_quality",
+      "expression": "-RANK($coa_gr1a) - RANK($at_gr1) + RANK($cop_at)",
+      "rationale": "Change in current operating assets and asset growth are overinvestment signals; cash profitability offsets them."
+    },
+    {
+      "name": "quality_growth_value",
+      "expression": "RANK($qmj_prof) + RANK($ni_be) + RANK($sale_me) - RANK($noa_at)",
+      "rationale": "Profitability quality and ROE tilted to cheap sales-to-price and low bloat."
+    },
+    {
+      "name": "mispr_mgmt_accrual",
+      "expression": "RANK($mispricing_mgmt) - RANK($oaccruals_at) - RANK($eqnetis_at) + RANK($gp_at)",
+      "rationale": "The management mispricing cluster (net issuance, accruals, investment) reinforced by low accruals, low issuance, profitability."
+    },
+    {
+      "name": "mispr_fin_disc_op",
+      "expression": "RANK($mispricing_perf) + RANK($mispricing_mgmt) - RANK($eqnetis_at) - RANK($at_gr1) + RANK($op_at)",
+      "rationale": "Mispricing reversal with financing and investment discipline, reinforced by operating profitability."
+    },
+    {
+      "name": "mispr_sale_growth_disc",
+      "expression": "RANK($mispricing_perf) + RANK($mispricing_mgmt) - RANK($eqnetis_at) - RANK($sale_gr1)",
+      "rationale": "Mispricing combined with low issuance and restrained sales growth (revenue-side overexpansion)."
+    },
+    {
+      "name": "cashprof_taccruals_disc",
+      "expression": "RANK($cop_at) - RANK($taccruals_at) - RANK($eqnetis_at)",
+      "rationale": "Cash profitability with low total accruals and disciplined issuance = high-quality real earnings."
+    }
+  ]
+}

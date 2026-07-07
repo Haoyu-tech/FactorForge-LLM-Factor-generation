@@ -1,0 +1,94 @@
+FAIL gate   1: strict_mispr_fin_q_3_eqnetis_at_3_at_gr1_ni_be  full_t=+2.29 oos_t=+1.35
+REJECT diversity: strict_mispr_fin_3_eqnetis_at_3_chcsho_12m  high_factor_rank_correlation
+FAIL gate   3: strict_issuance_change_mom_q_eqnetis_at_3_ret_12_1_ni_be  full_t=+2.89 oos_t=+1.23
+FAIL gate   4: strict_issuance_change_mom_eqnetis_at_6_ret_6_1  full_t=+1.85 oos_t=+1.25
+FAIL gate   5: strict_profit_to_growth_gp_at_sale_gr1_at_me  full_t=+2.51 oos_t=+1.01
+FAIL gate   6: risk_scaled_mispricing_12  full_t=+0.60 oos_t=-0.01
+REJECT diversity: issuance_level_change_mom_eqnetis_at_12  structure_duplicate_window_only
+FAIL gate   8: value_profit_growth_product_gp_at_sale_gr1  full_t=+0.07 oos_t=+0.19
+FAIL gate   9: trend_gp_value_stability_6  full_t=+1.57 oos_t=-0.10
+FAIL gate  10: strict_risk_scaled_mispr_fin_ivol_ff3_21d_12  full_t=+1.95 oos_t=+0.93
+FAIL gate  11: strict_risk_scaled_value_quality_ivol_ff3_21d_12  full_t=+1.32 oos_t=+0.20
+FAIL gate  12: profit_to_growth_value_gp_at_noa_at  full_t=+3.17 oos_t=+1.68
+REJECT diversity: mispr_ts_fin_disc_6_6  structure_duplicate_window_only
+FAIL gate  14: interaction_mispr_gp_lowrisk  full_t=+0.51 oos_t=-0.51
+FAIL gate  15: liquid_fin_disc  full_t=+0.66 oos_t=+0.94
+REJECT diversity: mispr_fin_quality  high_factor_rank_correlation
+REJECT diversity: strict_mispr_fin_q_3_eqnetis_at_3_sale_gr1_gp_at  high_factor_rank_correlation
+REJECT diversity: strict_mispr_fin_3_eqnetis_at_6_sale_gr1  high_factor_rank_correlation
+FAIL gate  19: strict_issuance_change_mom_q_eqnetis_at_3_ret_6_1_gp_at  full_t=+2.30 oos_t=+1.80
+REJECT diversity: strict_value_quality_issue_at_me_gp_at_eqnetis_at  high_factor_rank_correlation
+FAIL gate  21: strict_value_quality_product_at_me_gp_at_eqnetis_at  full_t=+1.72 oos_t=+1.28
+FAIL gate  22: strict_issuance_change_mom_eqnetis_at_6_resff3_12_1  full_t=+3.66 oos_t=+1.00
+FAIL gate  23: strict_profit_to_growth_gp_at_sale_gr1_bev_mev  full_t=+2.60 oos_t=+1.40
+FAIL gate  24: risk_scaled_mispricing_fin_12  full_t=+1.25 oos_t=+0.26
+FAIL gate  25: issuance_disc_quality_mom_eqnetis_at_12  full_t=+3.56 oos_t=+1.71
+PASS   4/100: value_profit_growth_product_gp_at_noa_at  full_t=+2.29 oos_t=+2.05 max_corr=0.62
+FAIL gate  27: trend_gp_value_12  full_t=+1.05 oos_t=-0.73
+FAIL gate  28: strict_risk_scaled_mispr_fin_ivol_ff3_21d_24  full_t=+2.09 oos_t=+1.01
+FAIL gate  29: strict_risk_scaled_value_quality_ivol_ff3_21d_24  full_t=+1.25 oos_t=+0.01
+FAIL gate  30: profit_to_growth_value_gp_at_chcsho_12m  full_t=+2.94 oos_t=+1.85
+REJECT diversity: mispr_ts_fin_qual_6_6  high_factor_rank_correlation
+FAIL gate  32: liquid_value_quality  full_t=+0.97 oos_t=+1.38
+REJECT diversity: strict_mispr_fin_q_3_eqnetis_at_3_sale_gr1_op_at  high_factor_rank_correlation
+REJECT diversity: strict_mispr_fin_3_eqnetis_at_6_noa_at  high_factor_rank_correlation
+REJECT diversity: strict_issuance_change_mom_q_eqnetis_at_3_ret_6_1_op_at  high_factor_rank_correlation
+FAIL gate  36: strict_value_quality_issue_at_me_gp_at_dbnetis_at  full_t=+2.57 oos_t=+0.94
+FAIL gate  37: strict_value_quality_product_at_me_gp_at_dbnetis_at  full_t=+2.00 oos_t=+0.59
+FAIL gate  38: strict_issuance_change_mom_eqnetis_at_12_ret_6_1  full_t=+2.33 oos_t=+1.68
+FAIL gate  39: strict_profit_to_growth_gp_at_noa_at_at_me  full_t=+3.17 oos_t=+1.37
+FAIL gate  40: risk_scaled_mispricing_24  full_t=+0.27 oos_t=-0.32
+FAIL gate  41: issuance_level_change_mom_eqnetis_at_24  full_t=+2.93 oos_t=+1.50
+FAIL gate  42: value_profit_growth_product_gp_at_chcsho_12m  full_t=+1.02 oos_t=+0.78
+FAIL gate  43: trend_gp_value_stability_12  full_t=+1.33 oos_t=-0.21
+FAIL gate  44: strict_risk_scaled_mispr_fin_ivol_ff3_21d_36  full_t=+2.04 oos_t=+0.98
+FAIL gate  45: strict_risk_scaled_value_quality_ivol_ff3_21d_36  full_t=+1.30 oos_t=+0.11
+FAIL gate  46: profit_to_growth_value_op_at_at_gr1  full_t=+3.59 oos_t=+1.75
+FAIL gate  47: mispr_ts_fin_disc_6_12  full_t=+3.40 oos_t=+1.94
+FAIL gate  48: interaction_mispr_value_lowrisk  full_t=-0.60 oos_t=-0.46
+FAIL gate  49: liquid_mom_value  full_t=+1.29 oos_t=+0.50
+REJECT diversity: strict_mispr_fin_q_3_eqnetis_at_3_sale_gr1_qmj_prof  high_factor_rank_correlation
+REJECT diversity: strict_mispr_fin_3_eqnetis_at_6_chcsho_12m  high_factor_rank_correlation
+REJECT diversity: strict_issuance_change_mom_q_eqnetis_at_3_ret_6_1_qmj_prof  high_factor_rank_correlation
+FAIL gate  53: strict_value_quality_issue_at_me_gp_at_chcsho_12m  full_t=+2.00 oos_t=+0.38
+FAIL gate  54: strict_value_quality_product_at_me_gp_at_chcsho_12m  full_t=+0.97 oos_t=+0.32
+REJECT diversity: strict_issuance_change_mom_eqnetis_at_12_resff3_12_1  high_factor_rank_correlation
+FAIL gate  56: strict_profit_to_growth_gp_at_noa_at_bev_mev  full_t=+2.88 oos_t=+1.42
+FAIL gate  57: risk_scaled_mispricing_fin_24  full_t=+1.05 oos_t=+0.29
+FAIL gate  58: issuance_disc_quality_mom_eqnetis_at_24  full_t=+3.61 oos_t=+1.77
+FAIL gate  59: value_profit_growth_product_op_at_at_gr1  full_t=+0.61 oos_t=-0.79
+FAIL gate  60: trend_op_value_6  full_t=+1.28 oos_t=-0.77
+FAIL gate  61: strict_risk_scaled_mispr_fin_beta_60m_6  full_t=+1.71 oos_t=+0.71
+FAIL gate  62: strict_risk_scaled_value_quality_beta_60m_6  full_t=+1.07 oos_t=-0.32
+FAIL gate  63: profit_to_growth_value_op_at_sale_gr1  full_t=+3.70 oos_t=+1.81
+REJECT diversity: mispr_ts_fin_qual_6_12  high_factor_rank_correlation
+REJECT diversity: strict_mispr_fin_q_3_eqnetis_at_3_sale_gr1_ni_be  high_factor_rank_correlation
+REJECT diversity: strict_mispr_fin_3_eqnetis_at_12_sale_gr1  high_factor_rank_correlation
+FAIL gate  67: strict_issuance_change_mom_q_eqnetis_at_3_ret_6_1_ni_be  full_t=+1.88 oos_t=+1.46
+FAIL gate  68: strict_issuance_change_mom_eqnetis_at_24_ret_6_1  full_t=+1.62 oos_t=+1.27
+FAIL gate  69: strict_profit_to_growth_gp_at_chcsho_12m_at_me  full_t=+2.63 oos_t=+1.47
+FAIL gate  70: risk_scaled_value_mom_6  full_t=+0.60 oos_t=-0.54
+FAIL gate  71: issuance_level_change_mom_dbnetis_at_6  full_t=+3.66 oos_t=+1.57
+FAIL gate  72: value_profit_growth_product_op_at_sale_gr1  full_t=+0.35 oos_t=-0.13
+FAIL gate  73: trend_op_value_stability_6  full_t=+0.91 oos_t=-0.72
+FAIL gate  74: strict_risk_scaled_mispr_fin_beta_60m_12  full_t=+1.74 oos_t=+0.77
+FAIL gate  75: strict_risk_scaled_value_quality_beta_60m_12  full_t=+1.05 oos_t=-0.19
+PASS   5/100: profit_to_growth_value_op_at_noa_at  full_t=+3.88 oos_t=+2.55 max_corr=0.71
+FAIL gate  77: mispr_ts_fin_disc_6_24  full_t=+3.18 oos_t=+1.64
+FAIL gate  78: interaction_value_safety_lowrisk  full_t=-0.43 oos_t=-0.58
+REJECT diversity: strict_mispr_fin_q_3_eqnetis_at_3_noa_at_gp_at  high_factor_rank_correlation
+REJECT diversity: strict_mispr_fin_3_eqnetis_at_12_noa_at  high_factor_rank_correlation
+REJECT diversity: strict_issuance_change_mom_q_eqnetis_at_3_resff3_12_1_gp_at  high_factor_rank_correlation
+REJECT diversity: strict_value_quality_issue_bev_mev_gp_at_eqnetis_at  high_factor_rank_correlation
+FAIL gate  83: strict_value_quality_product_bev_mev_gp_at_eqnetis_at  full_t=+1.70 oos_t=+1.45
+PASS   6/100: strict_issuance_change_mom_eqnetis_at_24_resff3_12_1  full_t=+3.80 oos_t=+2.32 max_corr=0.72
+FAIL gate  85: strict_profit_to_growth_gp_at_chcsho_12m_bev_mev  full_t=+2.80 oos_t=+1.41
+FAIL gate  86: risk_scaled_value_mom_fin_6  full_t=+2.01 oos_t=+0.42
+FAIL gate  87: issuance_disc_quality_mom_dbnetis_at_6  full_t=+3.33 oos_t=+1.34
+FAIL gate  88: value_profit_growth_product_op_at_noa_at  full_t=+1.64 oos_t=+0.62
+FAIL gate  89: trend_op_value_12  full_t=+1.45 oos_t=-0.46
+FAIL gate  90: strict_risk_scaled_mispr_fin_beta_60m_24  full_t=+1.52 oos_t=+0.55
+FAIL gate  91: strict_risk_scaled_value_quality_beta_60m_24  full_t=+1.03 oos_t=-0.29
+REJECT diversity: profit_to_growth_value_op_at_chcsho_12m  high_factor_rank_correlation
+REJECT diversity: mispr_ts_fin_qual_6_24  high_factor_rank_correlation
+FAIL gate  94: interaction_mom_quality  full_t=+1.94 oos_t=+0.36
