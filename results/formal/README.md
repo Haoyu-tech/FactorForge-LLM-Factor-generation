@@ -1,5 +1,10 @@
 # Formal evaluation — LLM vs mechanical search on the 120-factor pool
 
+[Project overview](../../README.md) · [Reproduction guide](../../docs/REPRODUCIBILITY.md)
+
+> **Recorded research artifacts.** Interpret tables and figures using this run's data and validation settings.
+
+
 Same 124-field pool, same fast_full grammar, same objective (selection RankIC 1972-01..2000-12), same OOS (>2000-12). Value-weighted, Newey-West throughout.
 
 ## Horse race: LLM economic factors vs full-grammar GP search

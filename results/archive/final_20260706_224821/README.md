@@ -1,5 +1,10 @@
 # LLM-Factor - consolidated results
 
+[Project overview](../../../README.md) · [Reproduction guide](../../../docs/REPRODUCIBILITY.md)
+
+> **Archived experiment.** Results below describe this stored run, not the current production of a new evaluation.
+
+
 One pass. Mechanical-search baseline = full-grammar GP only; random search is excluded.
 
 ![summary](SUMMARY.png)

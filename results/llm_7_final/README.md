@@ -1,5 +1,10 @@
 # De-redundant final factor set — 7 independent directions under every lens
 
+[Project overview](../../README.md) · [Reproduction guide](../../docs/REPRODUCIBILITY.md)
+
+> **Recorded research artifacts.** Interpret tables and figures using this run's data and validation settings.
+
+
 The 20 gate-valid LLM factors collapse to **7 correlation clusters** (see `../llm_20_valid/correlation/`); this is one representative per cluster (mutual corr<0.6). Each is run through the full chain. Value-weighted, Newey-West, 1972-2025, OOS post-2000.
 
 gate/zoo14/indneu = VW FF5+UMD alpha t (full/OOS); zoo14 = spanning vs the 14 JKP theme composites; FM = Fama-MacBeth t (EW / VW-WLS); net50bp = after-cost alpha t at 50bps.

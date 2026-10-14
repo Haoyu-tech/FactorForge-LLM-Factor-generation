@@ -1,3 +1,9 @@
-# LLM Formula Parse Trees
+# Factor Formula — `mispr_fin_disc`
 
-- [mispr_fin_disc](mispr_fin_disc.md) - [mispr_fin_disc.png](mispr_fin_disc.png)
+[Project overview](../../../../../README.md) · [Reproduction guide](../../../../../docs/REPRODUCIBILITY.md)
+
+A recorded expression decomposition for this factor.
+
+![Formula parse tree](mispr_fin_disc.png)
+
+[Read the expression and tree details](mispr_fin_disc.md)

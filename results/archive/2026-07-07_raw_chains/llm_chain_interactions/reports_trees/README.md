@@ -1,5 +1,10 @@
 # Factor Derivation Trees
 
+[Project overview](../../../../../README.md) · [Reproduction guide](../../../../../docs/REPRODUCIBILITY.md)
+
+> **Archived experiment.** Results below describe this stored run, not the current production of a new evaluation.
+
+
 - [persistent_mispricing_disc](persistent_mispricing_disc.md) - [persistent_mispricing_disc.png](persistent_mispricing_disc.png)
 - [earnings_yield_stability](earnings_yield_stability.md) - [earnings_yield_stability.png](earnings_yield_stability.png)
 - [cashprof_per_investment](cashprof_per_investment.md) - [cashprof_per_investment.png](cashprof_per_investment.png)

@@ -1,3 +1,9 @@
-# LLM Formula Parse Trees
+# Factor Formula — `debt_discipline_value`
 
-- [debt_discipline_value](debt_discipline_value.md) - [debt_discipline_value.png](debt_discipline_value.png)
+[Project overview](../../../../../README.md) · [Reproduction guide](../../../../../docs/REPRODUCIBILITY.md)
+
+A recorded expression decomposition for this factor.
+
+![Formula parse tree](debt_discipline_value.png)
+
+[Read the expression and tree details](debt_discipline_value.md)

@@ -1,3 +1,9 @@
-# LLM Formula Parse Trees
+# Factor Formula — `shareholder_yield_quality`
 
-- [shareholder_yield_quality](shareholder_yield_quality.md) - [shareholder_yield_quality.png](shareholder_yield_quality.png)
+[Project overview](../../../../../README.md) · [Reproduction guide](../../../../../docs/REPRODUCIBILITY.md)
+
+A recorded expression decomposition for this factor.
+
+![Formula parse tree](shareholder_yield_quality.png)
+
+[Read the expression and tree details](shareholder_yield_quality.md)

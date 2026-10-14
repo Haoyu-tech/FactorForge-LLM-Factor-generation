@@ -1,3 +1,9 @@
-# LLM Formula Parse Trees
+# Factor Formula — `cash_prof_accrual_quality`
 
-- [cash_prof_accrual_quality](cash_prof_accrual_quality.md) - [cash_prof_accrual_quality.png](cash_prof_accrual_quality.png)
+[Project overview](../../../../../README.md) · [Reproduction guide](../../../../../docs/REPRODUCIBILITY.md)
+
+A recorded expression decomposition for this factor.
+
+![Formula parse tree](cash_prof_accrual_quality.png)
+
+[Read the expression and tree details](cash_prof_accrual_quality.md)

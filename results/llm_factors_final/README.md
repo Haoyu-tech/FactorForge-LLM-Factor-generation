@@ -1,5 +1,10 @@
 # LLM-generated factors — full-chain survivors
 
+[Project overview](../../README.md) · [Reproduction guide](../../docs/REPRODUCIBILITY.md)
+
+> **Recorded research artifacts.** Interpret tables and figures using this run's data and validation settings.
+
+
 Factors proposed by the LLM (Claude acting as the LLM, no API) from the **expanded
 120-factor Kelly-153 pool + field dictionary**, run through the entire evaluation chain
 (gate → spanning vs the anomaly zoo → walk-forward → HLZ multiple-testing → Fama-MacBeth).

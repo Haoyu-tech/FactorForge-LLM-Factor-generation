@@ -1,5 +1,10 @@
 # LLM Formula Parse Trees
 
+[Project overview](../../../../../README.md) · [Reproduction guide](../../../../../docs/REPRODUCIBILITY.md)
+
+> **Archived experiment.** Results below describe this stored run, not the current production of a new evaluation.
+
+
 - [shareholder_yield_quality](shareholder_yield_quality.md) - [shareholder_yield_quality.png](shareholder_yield_quality.png)
 - [quality_bloat_value](quality_bloat_value.md) - [quality_bloat_value.png](quality_bloat_value.png)
 - [ev_value_cash_profitability](ev_value_cash_profitability.md) - [ev_value_cash_profitability.png](ev_value_cash_profitability.png)

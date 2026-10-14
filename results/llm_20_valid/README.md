@@ -1,5 +1,10 @@
 # 20 valid LLM-generated factors
 
+[Project overview](../../README.md) · [Reproduction guide](../../docs/REPRODUCIBILITY.md)
+
+> **Recorded research artifacts.** Interpret tables and figures using this run's data and validation settings.
+
+
 Factors proposed by the LLM (Claude as LLM) from the expanded 120-factor Kelly pool, each PASSing the strict factor_lab gate: economic rationale + value-weighted FF5+UMD alpha significant in BOTH full sample (1972-2025) and OOS (post-2000), monotone deciles, OOS-IC sign persistence.
 
 | # | Factor | VW FF5+UMD a (ann) | t full | t OOS | Expression |

@@ -1,3 +1,9 @@
-# LLM Formula Parse Trees
+# Factor Formula — `mispr_profit_lowrisk`
 
-- [mispr_profit_lowrisk](mispr_profit_lowrisk.md) - [mispr_profit_lowrisk.png](mispr_profit_lowrisk.png)
+[Project overview](../../../../../README.md) · [Reproduction guide](../../../../../docs/REPRODUCIBILITY.md)
+
+A recorded expression decomposition for this factor.
+
+![Formula parse tree](mispr_profit_lowrisk.png)
+
+[Read the expression and tree details](mispr_profit_lowrisk.md)

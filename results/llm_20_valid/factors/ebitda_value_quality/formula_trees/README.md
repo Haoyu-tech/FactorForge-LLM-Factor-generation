@@ -1,3 +1,9 @@
-# LLM Formula Parse Trees
+# Factor Formula — `ebitda_value_quality`
 
-- [ebitda_value_quality](ebitda_value_quality.md) - [ebitda_value_quality.png](ebitda_value_quality.png)
+[Project overview](../../../../../README.md) · [Reproduction guide](../../../../../docs/REPRODUCIBILITY.md)
+
+A recorded expression decomposition for this factor.
+
+![Formula parse tree](ebitda_value_quality.png)
+
+[Read the expression and tree details](ebitda_value_quality.md)
