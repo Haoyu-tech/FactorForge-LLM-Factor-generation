@@ -1,5 +1,7 @@
 # LLM-Factor: Auditable Factor Discovery with Large Language Models
 
+[Reproduction guide](docs/REPRODUCIBILITY.md) · [Code and artifact map](docs/REPOSITORY_MAP.md)
+
 **Can large language models generate economically interpretable equity factors
 that survive modern empirical asset-pricing validation?**
 
