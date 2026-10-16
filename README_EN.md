@@ -2,7 +2,7 @@
 
 # FactorForge
 
-**[简体中文](README.md) · English**
+**English · [简体中文](README_ZH.md)**
 
 **From research hypotheses to testable factors and out-of-sample portfolios.**
 

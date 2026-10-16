@@ -1,6 +1,6 @@
 # FactorForge · 因子智研
 
-[Full English README](../README_EN.md) · [简体中文](../README.md)
+[Full English README](../README.md) · [简体中文](../README_ZH.md)
 
 An interactive factor-research platform with Chinese/English UI, built on the QuantaAlpha codebase. The original package name remains `quantaalpha` for import compatibility. Original author metadata is preserved in `pyproject.toml`.
 
