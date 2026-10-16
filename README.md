@@ -2,6 +2,8 @@
 
 # FactorForge · 因子智研
 
+**简体中文 · [English](README_EN.md)**
+
 **从研究假设，到可检验的因子，再到样本外组合回测。**
 
 面向美股、A 股与 Crypto 永续合约的 LLM 因子研究平台。

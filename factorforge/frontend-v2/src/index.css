@@ -108,6 +108,21 @@
   background-size: 32px 32px, 32px 32px, auto, auto;
 }
 
+/* A static decorative chart stays behind content and never intercepts input. */
+.research-grid {
+  position: relative;
+  isolation: isolate;
+}
+
+.research-grid::before {
+  content: '';
+  position: fixed;
+  inset: 76px 0 0;
+  z-index: -1;
+  pointer-events: none;
+  background: url('/candlestick-background.svg') center / cover no-repeat;
+}
+
 /* Animated gradient border */
 @keyframes gradient-border {
   0%, 100% {

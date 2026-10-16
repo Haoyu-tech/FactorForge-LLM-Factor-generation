@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" fill="none">
+  <!-- Decorative illustration only; these candles do not represent market data. -->
+  <g stroke="#0f766e" stroke-width="2" opacity=".16">
+    <path d="M40 640V760M136 610V728M232 550V680M376 530V650M472 480V610M568 450V570M712 400V530M808 370V500M904 330V460M1048 300V430M1144 250V370M1240 210V340M1384 190V310M1480 140V270M1576 110V240"/>
+    <g fill="#0f766e" fill-opacity=".45">
+      <rect x="29" y="670" width="22" height="60" rx="2"/><rect x="125" y="640" width="22" height="58" rx="2"/>
+      <rect x="221" y="585" width="22" height="65" rx="2"/><rect x="365" y="560" width="22" height="60" rx="2"/>
+      <rect x="461" y="515" width="22" height="65" rx="2"/><rect x="557" y="480" width="22" height="60" rx="2"/>
+      <rect x="701" y="435" width="22" height="65" rx="2"/><rect x="797" y="400" width="22" height="65" rx="2"/>
+      <rect x="893" y="365" width="22" height="65" rx="2"/><rect x="1037" y="330" width="22" height="70" rx="2"/>
+      <rect x="1133" y="280" width="22" height="60" rx="2"/><rect x="1229" y="240" width="22" height="70" rx="2"/>
+      <rect x="1373" y="220" width="22" height="60" rx="2"/><rect x="1469" y="175" width="22" height="65" rx="2"/>
+      <rect x="1565" y="145" width="22" height="65" rx="2"/>
+    </g>
+  </g>
+  <g stroke="#b76c56" stroke-width="2" opacity=".13">
+    <path d="M88 640V750M184 600V720M280 550V670M328 570V690M424 530V660M520 480V610M616 450V570M664 465V590M760 400V530M856 370V500M952 330V460M1000 350V480M1096 300V425M1192 255V380M1288 210V345M1336 230V360M1432 190V310M1528 145V275"/>
+    <g fill="#b76c56" fill-opacity=".35">
+      <rect x="77" y="670" width="22" height="50" rx="2"/><rect x="173" y="630" width="22" height="60" rx="2"/>
+      <rect x="269" y="580" width="22" height="60" rx="2"/><rect x="317" y="600" width="22" height="60" rx="2"/>
+      <rect x="413" y="560" width="22" height="65" rx="2"/><rect x="509" y="515" width="22" height="60" rx="2"/>
+      <rect x="605" y="480" width="22" height="60" rx="2"/><rect x="653" y="495" width="22" height="65" rx="2"/>
+      <rect x="749" y="435" width="22" height="60" rx="2"/><rect x="845" y="405" width="22" height="60" rx="2"/>
+      <rect x="941" y="365" width="22" height="60" rx="2"/><rect x="989" y="380" width="22" height="70" rx="2"/>
+      <rect x="1085" y="335" width="22" height="60" rx="2"/><rect x="1181" y="285" width="22" height="65" rx="2"/>
+      <rect x="1277" y="245" width="22" height="65" rx="2"/><rect x="1325" y="260" width="22" height="70" rx="2"/>
+      <rect x="1421" y="220" width="22" height="60" rx="2"/><rect x="1517" y="180" width="22" height="60" rx="2"/>
+    </g>
+  </g>
+  <path d="M0 760C180 760 190 650 360 660S560 540 720 535S940 415 1100 410S1350 290 1600 230" stroke="#0f766e" stroke-width="2" opacity=".08"/>
+</svg>

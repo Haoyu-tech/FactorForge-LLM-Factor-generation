@@ -22,6 +22,14 @@ def line(coords,fill='#29414a',width=1):
 for x in range(0,1800,60): line((x,0,x,1170),'#0b222b')
 for y in range(0,1170,60): line((0,y,1800,y),'#0b222b')
 
+# Decorative candlesticks, not historical prices or performance results.
+for i in range(23):
+    x = 1000 + i * 32
+    y = 285 - i * 5 + (i % 4) * 9
+    color = '#19443f' if i % 3 else '#3c3333'
+    line((x, y - 22, x, y + 47), color, 2)
+    box((x - 7, y, x + 7, y + 27), color, radius=2)
+
 box((64,52,116,104),'#a7f3d0',radius=14)
 text(79,54,'F',34,'#071b24',True)
 text(132,52,'FactorForge',34,'#f0f7f5',True)
