@@ -1,6 +1,0 @@
-factor,gate_full/oos,zoo14_full/oos,walk%+,HLZ_t3,FM_EW/VW,net50bps_t,indneu_full/oos
-cash_prof_accrual_quality,4.82/2.71,2.46/1.33,83%,True,6.4/5.0,3.19,3.28/2.04
-earnings_yield_stability,3.27/2.49,1.18/2.21,92%,True,6.2/5.2,1.42,3.49/2.13
-quality_bloat_value,3.67/2.79,2.02/1.64,100%,True,6.6/5.8,2.02,2.04/1.10
-shareholder_yield_quality,3.22/2.58,0.70/1.48,92%,True,6.9/5.0,2.03,2.70/1.62
-persistent_mispricing_disc,4.02/2.64,2.54/2.25,92%,True,6.4/4.9,2.94,1.28/-0.29

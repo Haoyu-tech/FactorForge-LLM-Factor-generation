@@ -45,4 +45,4 @@ Python tests: `python -m pytest tests` from this directory.
 
 This publication captures the working research platform; it is not a certification of trading performance. Some legacy UI text still uses the translation fallback. Existing statistical/portfolio assumptions should be reviewed for each market before relying on reported results. Tests and build checks do not require launching new mining jobs.
 
-See [README.md](README.md) and [README_EN.md](README_EN.md) for the inherited framework documentation. The repository's root research pipeline and historical results remain separate from this web platform.
+See [README.md](README.md) and [README_EN.md](README_EN.md) for the inherited framework documentation. This repository now contains the FactorForge platform and its documentation; the earlier standalone research project has been removed from the current tree.
