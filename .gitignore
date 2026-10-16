@@ -4,7 +4,11 @@ data/
 *.parquet.zip
 
 # --- Upstream repo (clone separately; grammar/parser reused) ---
-QuantaAlpha/
+/QuantaAlpha/
+
+# Source data adapters belong to the bundled platform (not market datasets).
+!factorforge/quantaalpha/data/
+!factorforge/quantaalpha/data/**
 
 # --- Private thesis material ---
 *.docx

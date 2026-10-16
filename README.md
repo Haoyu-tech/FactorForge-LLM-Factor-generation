@@ -14,6 +14,8 @@ Auditable equity-factor discovery with economic hypotheses and empirical validat
 
 ## Overview
 
+**Interactive platform:** [FactorForge · 因子智研](factorforge/PLATFORM.md) now includes the multi-market web interface, bilingual settings, factor library, mining engine and expanding-window backtests. Platform source lives in [`factorforge/`](factorforge/); external market data and credentials are not included.
+
 Use an LLM to propose interpretable financial hypotheses, express them in a shared factor grammar, and evaluate them against a mechanical genetic-programming baseline on a monthly S&P 500 panel.
 
 ```text
@@ -41,7 +43,7 @@ Economic hypothesis → Factor expression → Candidate ledger → Validation ga
 
 ## Quick start
 
-A fresh clone needs the compatible **QuantaAlpha source**, a configured Python environment, and external WRDS-derived inputs. The upstream folder is not bundled in this checkout.
+A fresh clone needs a configured Python environment and external WRDS-derived inputs. The web platform's compatible QuantaAlpha package is bundled under `factorforge/`; the research adapter may require its upstream path settings to be adjusted accordingly.
 
 After preparing those prerequisites:
 
