@@ -15,6 +15,8 @@
 
 </div>
 
+![FactorForge platform overview: multi-market factor research and expanding-window backtesting](docs/assets/factorforge-overview.png)
+
 ---
 
 ## 平台简介
