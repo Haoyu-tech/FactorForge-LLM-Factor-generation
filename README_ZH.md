@@ -2,16 +2,19 @@
 
 # FactorForge · 因子智研
 
+LLM 驱动的多市场因子生成与研究平台
+
 **[English](README.md) · 简体中文**
 
 **从研究假设，到可检验的因子，再到样本外组合回测。**
 
 面向美股、A 股与 Crypto 永续合约的 LLM 因子研究平台。
 
-![Python](https://img.shields.io/badge/Python-3.10-3776AB?style=flat-square)
-![React](https://img.shields.io/badge/React-18-149ECA?style=flat-square)
-![Markets](https://img.shields.io/badge/Markets-US%20%7C%20CN%20%7C%20Crypto-0F766E?style=flat-square)
-![Languages](https://img.shields.io/badge/UI-中文%20%7C%20English-0F766E?style=flat-square)
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![React](https://img.shields.io/badge/React-18-149ECA?logo=react&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
+![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
+![Markets](https://img.shields.io/badge/Markets-US%20%7C%20CN%20%7C%20Crypto-0F766E)
 
 [平台功能](#平台功能) · [支持市场](#支持市场) · [快速部署](#快速部署) · [代码结构](#代码结构) · [English guide](factorforge/PLATFORM.md)
 
@@ -26,9 +29,14 @@
 下图使用平台已保存的真实因子 `Cash_Flow_Quality_Growth_Stability_252D` 评价结果：S&P 500 股票池，**2015–2025 年测试集，月度调仓**。展示十分组累计收益、各组年化净收益、RankIC / RankICIR，以及多空组合诊断。
 
 ![FactorForge 因子评价：十分组收益曲线与预测统计](docs/assets/factor-results-example.png)
+<details>
+<summary>展开因子解释、风格暴露与显著性诊断</summary>
+
 ![因子解释、FF5 风格暴露与 Alpha 显著性](docs/assets/factor-interpretation-example.png)
 
 **解释核对：** 保存的名称与 LLM 叙述提到现金流和增长，但实际公式对销售额／总资产的 252 期均值与标准差之比进行排名，没有显式使用经营现金流或销售增长率。第二张图按实际公式解释，并展示缓存中的 FF5 诊断；Alpha 的 p 值约为 0.099，未达到通常的 5% 显著性水平。
+
+</details>
 
 图表依据已有研究结果绘制，不代表实盘业绩或典型收益。曲线使用缓存采样点，指标取自已保存的评价结果；示例按文件顺序选取首个具有区间曲线缓存的美股因子，未按收益高低挑选。
 
@@ -87,13 +95,24 @@ A 股可配置剔除当期 ST、上市不足指定交易日的新股，以及创
 
 ## 快速部署
 
-推荐使用 **Linux / Windows WSL2、Python 3.10、Node.js 18+**。以下为手动启动方式，不依赖本机已有的系统服务。
+### 环境与技术栈
+
+| 组件 | 版本与用途 |
+|---|---|
+| Python | 本部署流程推荐 **3.10**；包元数据要求 **>=3.10** |
+| Node.js | Vite 5 工具链要求 **18+**；安装时使用仍受维护的 LTS 版本 |
+| 前端 | React 18、TypeScript 5、Vite 5、Tailwind CSS 3 |
+| 后端 | FastAPI >=0.109、Pydantic >=2.5.3、Uvicorn >=0.27 |
+| 研究引擎 | Qlib，以及 LightGBM、PLS5、Lasso 流程 |
+| 部署环境 | Linux / Windows WSL2 |
+
+以上为项目声明的依赖要求，不表示所有更高版本均已测试。前端通过 `npm ci` 使用锁文件中的版本；Python 依赖见 `factorforge/requirements.txt` 和后端依赖文件。以下为手动部署方式。
 
 ### 1. 获取代码并安装 Python 依赖
 
 ```bash
-git clone https://github.com/Haoyu-tech/LLM---Factor-generation.git
-cd LLM---Factor-generation/factorforge
+git clone https://github.com/Haoyu-tech/FactorForge-LLM-Factor-generation.git
+cd FactorForge-LLM-Factor-generation/factorforge
 
 python3.10 -m venv .venv
 source .venv/bin/activate
@@ -117,7 +136,7 @@ python backend/app.py
 ### 3. 在另一个终端启动前端
 
 ```bash
-cd LLM---Factor-generation/factorforge/frontend-v2
+cd FactorForge-LLM-Factor-generation/factorforge/frontend-v2
 npm run dev
 ```
 

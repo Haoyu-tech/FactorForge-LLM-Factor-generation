@@ -1,14 +1,21 @@
 <div align="center">
 
-# FactorForge
+# FactorForge · LLM Factor Generation
 
 **English · [简体中文](README_ZH.md)**
 
 **From research hypotheses to testable factors and out-of-sample portfolios.**
 
-An LLM-powered research workspace for US equities, China A-shares and crypto perpetuals.
+Generate, evaluate and organize investment factors across **US equities, China A-shares and crypto perpetuals**.
 
-[Features](#features) · [Markets](#markets) · [Quick start](#quick-start) · [Project structure](#project-structure)
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![React](https://img.shields.io/badge/React-18-149ECA?logo=react&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
+![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
+![Markets](https://img.shields.io/badge/Markets-US%20%7C%20CN%20%7C%20Crypto-0F766E)
+
+
+[Results](#factor-results-example) · [Features](#features) · [Markets](#markets) · [Quick start](#quick-start) · [Project structure](#project-structure)
 
 </div>
 
@@ -19,9 +26,14 @@ An LLM-powered research workspace for US equities, China A-shares and crypto per
 A real saved evaluation of `Cash_Flow_Quality_Growth_Stability_252D` on the S&P 500 universe: test period **2015–2025**, with **monthly rebalancing**. The figure combines ten decile return curves, annualized net returns by decile, RankIC / RankICIR and long–short diagnostics.
 
 ![FactorForge saved factor evaluation: decile returns and predictive statistics](docs/assets/factor-results-example.png)
+<details>
+<summary>Signal interpretation, exposures and statistical diagnostics</summary>
+
 ![Factor interpretation, FF5 exposures and alpha diagnostics](docs/assets/factor-interpretation-example.png)
 
 **Interpretation audit:** the stored name and LLM narrative refer to cash flow and growth, but the expression ranks the 252-observation mean-to-standard-deviation ratio of Sales / Assets. It does not explicitly use operating cash flow or sales growth. The second figure explains the actual expression and includes saved FF5 diagnostics; the FF5 alpha p-value is approximately 0.099, above the conventional 5% threshold.
+
+</details>
 
 This is a visualization of an existing research result, not a live trading record or a claim of typical performance. Curves use saved sampled points; summary metrics come from the saved evaluation. Selected as the first available US factor with cached split curves, without ranking by returns.
 
@@ -78,13 +90,24 @@ Single-factor evaluation supports daily, weekly and monthly rebalancing. Portfol
 
 ## Quick start
 
-Recommended environment: **Linux or Windows WSL2, Python 3.10 and Node.js 18+**.
+### Environment and technology
+
+| Component | Version / purpose |
+|---|---|
+| Python | **3.10 recommended for this setup**; package metadata requires **>=3.10** |
+| Node.js | **18+** for the bundled Vite 5 toolchain; use an actively supported LTS release |
+| Frontend | React 18, TypeScript 5, Vite 5, Tailwind CSS 3 |
+| Backend | FastAPI >=0.109, Pydantic >=2.5.3, Uvicorn >=0.27 |
+| Research engine | Qlib with LightGBM, PLS5 and Lasso workflows |
+| Deployment | Linux or Windows WSL2 |
+
+These are declared requirements, not a claim that every newer runtime has been tested. `npm ci` installs the frontend versions recorded in the lockfile. Python dependencies are defined in `factorforge/requirements.txt` and the backend requirements file.
 
 ### 1. Install the Python environment
 
 ```bash
-git clone https://github.com/Haoyu-tech/LLM---Factor-generation.git
-cd LLM---Factor-generation/factorforge
+git clone https://github.com/Haoyu-tech/FactorForge-LLM-Factor-generation.git
+cd FactorForge-LLM-Factor-generation/factorforge
 python3.10 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -106,7 +129,7 @@ python backend/app.py
 ### 3. Start the frontend in a second terminal
 
 ```bash
-cd LLM---Factor-generation/factorforge/frontend-v2
+cd FactorForge-LLM-Factor-generation/factorforge/frontend-v2
 npm run dev
 ```
 
