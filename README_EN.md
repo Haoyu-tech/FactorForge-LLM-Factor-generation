@@ -14,6 +14,17 @@ An LLM-powered research workspace for US equities, China A-shares and crypto per
 
 ![FactorForge platform overview](docs/assets/factorforge-overview.png)
 
+## Factor results example
+
+A real saved evaluation of `Cash_Flow_Quality_Growth_Stability_252D` on the S&P 500 universe: test period **2015–2025**, with **monthly rebalancing**. The figure combines ten decile return curves, annualized net returns by decile, RankIC / RankICIR and long–short diagnostics.
+
+![FactorForge saved factor evaluation: decile returns and predictive statistics](docs/assets/factor-results-example.png)
+![Factor interpretation, FF5 exposures and alpha diagnostics](docs/assets/factor-interpretation-example.png)
+
+**Interpretation audit:** the stored name and LLM narrative refer to cash flow and growth, but the expression ranks the 252-observation mean-to-standard-deviation ratio of Sales / Assets. It does not explicitly use operating cash flow or sales growth. The second figure explains the actual expression and includes saved FF5 diagnostics; the FF5 alpha p-value is approximately 0.099, above the conventional 5% threshold.
+
+This is a visualization of an existing research result, not a live trading record or a claim of typical performance. Curves use saved sampled points; summary metrics come from the saved evaluation. Selected as the first available US factor with cached split curves, without ranking by returns.
+
 ## Overview
 
 FactorForge brings hypothesis generation, factor calculation, statistical evaluation, library management and portfolio backtesting into one web workspace. Describe an idea or select research directions, evaluate candidate signals and use validation feedback to guide subsequent iterations.
