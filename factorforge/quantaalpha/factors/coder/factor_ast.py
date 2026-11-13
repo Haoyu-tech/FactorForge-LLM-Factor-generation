@@ -264,6 +264,8 @@ def are_nodes_equal(node1: Node, node2: Node) -> bool:
         return node1.op == node2.op
     elif isinstance(node1, ConditionalNode):
         return True
+    elif isinstance(node1, UnaryOpNode):
+        return node1.op == node2.op
     return False
 
 @dataclass
@@ -290,6 +292,8 @@ def find_largest_common_subtree(root1: Node, root2: Node) -> Opt[SubtreeMatch]:
             return 1 + get_subtree_size(node.condition) + \
                    get_subtree_size(node.true_expr) + \
                    get_subtree_size(node.false_expr)
+        elif isinstance(node, UnaryOpNode):
+            return 1 + get_subtree_size(node.operand)
         return 0
 
     def get_all_subtrees(root: Node) -> List[Node]:
@@ -305,6 +309,8 @@ def find_largest_common_subtree(root1: Node, root2: Node) -> Opt[SubtreeMatch]:
             result.extend(get_all_subtrees(root.condition))
             result.extend(get_all_subtrees(root.true_expr))
             result.extend(get_all_subtrees(root.false_expr))
+        elif isinstance(root, UnaryOpNode):
+            result.extend(get_all_subtrees(root.operand))
         return result
 
     def is_commutative_op(op: str) -> bool:
@@ -335,6 +341,8 @@ def find_largest_common_subtree(root1: Node, root2: Node) -> Opt[SubtreeMatch]:
             return are_subtrees_equal(node1.condition, node2.condition) and \
                    are_subtrees_equal(node1.true_expr, node2.true_expr) and \
                    are_subtrees_equal(node1.false_expr, node2.false_expr)
+        elif isinstance(node1, UnaryOpNode):
+            return are_subtrees_equal(node1.operand, node2.operand)
         return False
 
     subtrees1 = get_all_subtrees(root1)
@@ -419,6 +427,8 @@ def count_number_nodes(node: Node) -> int:
         return (count_number_nodes(node.condition) + 
                 count_number_nodes(node.true_expr) + 
                 count_number_nodes(node.false_expr))
+    elif isinstance(node, UnaryOpNode):
+        return count_number_nodes(node.operand)
     return 0
 
 
@@ -463,6 +473,8 @@ def collect_unique_vars(node: Node, unique_vars: set) -> None:
         collect_unique_vars(node.condition, unique_vars)
         collect_unique_vars(node.true_expr, unique_vars)
         collect_unique_vars(node.false_expr, unique_vars)
+    elif isinstance(node, UnaryOpNode):
+        collect_unique_vars(node.operand, unique_vars)
 
 
 def count_all_nodes(expr: str) -> int:
@@ -535,6 +547,8 @@ def collect_base_features(node: Node, base_features: set) -> None:
         collect_base_features(node.condition, base_features)
         collect_base_features(node.true_expr, base_features)
         collect_base_features(node.false_expr, base_features)
+    elif isinstance(node, UnaryOpNode):
+        collect_base_features(node.operand, base_features)
 
 
 def count_nodes(node: Node) -> int:
@@ -557,6 +571,8 @@ def count_nodes(node: Node) -> int:
         return 1 + (count_nodes(node.condition) + 
                     count_nodes(node.true_expr) + 
                     count_nodes(node.false_expr))
+    elif isinstance(node, UnaryOpNode):
+        return 1 + count_nodes(node.operand)
     return 0
 
 
