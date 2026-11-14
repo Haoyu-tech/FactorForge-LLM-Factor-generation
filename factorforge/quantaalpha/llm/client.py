@@ -188,6 +188,19 @@ def _sdk_model_name(model: str) -> str:
     return model
 
 
+def _preview(text: str | None, limit: int = 200) -> str:
+    """Render a response snippet for logging.
+
+    Reasoning models may return ``content=None`` when the token budget is spent
+    inside the thinking block, so this must never assume ``text`` is a string.
+    """
+    if text is None:
+        return "<no content>"
+    if len(text) > limit:
+        return text[:limit] + f"... [{len(text)} chars]"
+    return text
+
+
 class ConvManager:
     """
     This is a conversation manager of LLM
@@ -1159,13 +1172,13 @@ class APIBackend:
             resp = self._create_codex_cli_completion(messages, json_mode=expects_json)
             finish_reason = "stop"
             if LLM_SETTINGS.log_llm_chat_content:
-                display_resp = resp[:200] + f"... [{len(resp)} chars]" if len(resp) > 200 else resp
+                display_resp = _preview(resp)
                 logger.info(f"{LogColors.CYAN}Response(Codex CLI):{display_resp}{LogColors.END}", tag="llm_messages")
         elif self.use_claude_cli:
             resp = self._create_claude_cli_completion(messages, json_mode=expects_json)
             finish_reason = "stop"
             if LLM_SETTINGS.log_llm_chat_content:
-                display_resp = resp[:200] + f"... [{len(resp)} chars]" if len(resp) > 200 else resp
+                display_resp = _preview(resp)
                 logger.info(f"{LogColors.CYAN}Response(Claude CLI):{display_resp}{LogColors.END}", tag="llm_messages")
         else:
             kwargs = dict(
@@ -1205,14 +1218,14 @@ class APIBackend:
                         finish_reason = chunk.choices[0].finish_reason
 
                 if LLM_SETTINGS.log_llm_chat_content:
-                    display_resp = resp[:200] + f"... [{len(resp)} chars]" if len(resp) > 200 else resp
+                    display_resp = _preview(resp)
                     logger.info(f"{LogColors.CYAN}Response:{display_resp}{LogColors.END}", tag="llm_messages")
 
             else:
                 resp = response.choices[0].message.content
                 finish_reason = response.choices[0].finish_reason
                 if LLM_SETTINGS.log_llm_chat_content:
-                    display_resp = resp[:200] + f"... [{len(resp)} chars]" if len(resp) > 200 else resp
+                    display_resp = _preview(resp)
                     logger.info(f"{LogColors.CYAN}Response:{display_resp}{LogColors.END}", tag="llm_messages")
                     logger.info(
                         json.dumps(
