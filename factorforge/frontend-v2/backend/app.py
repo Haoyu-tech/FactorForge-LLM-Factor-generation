@@ -642,7 +642,10 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         # CONDA_DEFAULT_ENV to be a string, and its child commands need the
         # active environment's bin directory on PATH.
         conda_env_name = dotenv.get("CONDA_ENV_NAME", "quantaalpha")
-        active_prefix = str(Path(sys.executable).resolve().parent.parent)
+        # sys.prefix is the active venv/conda prefix. Resolving sys.executable
+        # instead follows the venv symlink to the base interpreter, whose bin
+        # directory lacks the project's packages (pandas, qlib, qrun).
+        active_prefix = sys.prefix
         env["CONDA_DEFAULT_ENV"] = conda_env_name
         env["CONDA_PREFIX"] = active_prefix
         env["PATH"] = os.pathsep.join(
@@ -752,9 +755,18 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
             env["QLIB_REGION"] = "us"
 
         results_base = dotenv.get("DATA_RESULTS_DIR", str(PROJECT_ROOT / "data" / "results"))
+        # The factor executor resolves a relative data folder against the
+        # workspace's ancestors (yielding paths like data/data/results/...), so
+        # always hand it an absolute path anchored at the project root.
+        if not Path(results_base).is_absolute():
+            results_base = str((PROJECT_ROOT / results_base).resolve())
         source_cache = Path(results_base) / f"factor_source_{env['DATA_SOURCE']}_{market}"
         env["FACTOR_COSTEER_DATA_FOLDER"] = str(source_cache / "all")
         env["FACTOR_COSTEER_DATA_FOLDER_DEBUG"] = str(source_cache / "debug")
+        # The factor executor defaults to the bare "python" on PATH, which may
+        # be a system or pyenv interpreter without pandas. Pin it to the
+        # interpreter running this backend unless the user overrides it.
+        env.setdefault("FACTOR_COSTEER_PYTHON_BIN", sys.executable)
         env["QLIB_DATA_START"] = req.trainStartDate
         env["QLIB_DATA_END"] = req.testEndDate
         env["WORKSPACE_PATH"] = f"{results_base}/workspace_{experiment_id}"

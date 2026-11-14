@@ -174,6 +174,33 @@ except ImportError:
     Llama = None  # type: ignore[misc, assignment]
 
 
+
+def _sdk_model_name(model: str) -> str:
+    """Strip a litellm-style ``openai/`` provider prefix before calling the OpenAI SDK.
+
+    RD-Agent's litellm backend requires ``openai/<model>`` for OpenAI-compatible
+    gateways, while this client talks to the same gateway through the OpenAI SDK,
+    which expects the bare model id. Accepting both lets one CHAT_MODEL value
+    serve both code paths.
+    """
+    if isinstance(model, str) and model.startswith("openai/"):
+        return model[len("openai/"):]
+    return model
+
+
+def _preview(text: str | None, limit: int = 200) -> str:
+    """Render a response snippet for logging.
+
+    Reasoning models may return ``content=None`` when the token budget is spent
+    inside the thinking block, so this must never assume ``text`` is a string.
+    """
+    if text is None:
+        return "<no content>"
+    if len(text) > limit:
+        return text[:limit] + f"... [{len(text)} chars]"
+    return text
+
+
 class ConvManager:
     """
     This is a conversation manager of LLM
@@ -798,12 +825,12 @@ class APIBackend:
             for batch_idx, sliced_filtered_input_content_list in enumerate(batches):
                 if self.use_azure:
                     response = self.embedding_client.embeddings.create(
-                        model=self.embedding_model,
+                        model=_sdk_model_name(self.embedding_model),
                         input=sliced_filtered_input_content_list,
                     )
                 else:
                     response = self.embedding_client.embeddings.create(
-                        model=self.embedding_model,
+                        model=_sdk_model_name(self.embedding_model),
                         input=sliced_filtered_input_content_list,
                     )
                 for index, data in enumerate(response.data):
@@ -1145,17 +1172,17 @@ class APIBackend:
             resp = self._create_codex_cli_completion(messages, json_mode=expects_json)
             finish_reason = "stop"
             if LLM_SETTINGS.log_llm_chat_content:
-                display_resp = resp[:200] + f"... [{len(resp)} chars]" if len(resp) > 200 else resp
+                display_resp = _preview(resp)
                 logger.info(f"{LogColors.CYAN}Response(Codex CLI):{display_resp}{LogColors.END}", tag="llm_messages")
         elif self.use_claude_cli:
             resp = self._create_claude_cli_completion(messages, json_mode=expects_json)
             finish_reason = "stop"
             if LLM_SETTINGS.log_llm_chat_content:
-                display_resp = resp[:200] + f"... [{len(resp)} chars]" if len(resp) > 200 else resp
+                display_resp = _preview(resp)
                 logger.info(f"{LogColors.CYAN}Response(Claude CLI):{display_resp}{LogColors.END}", tag="llm_messages")
         else:
             kwargs = dict(
-                model=model,
+                model=_sdk_model_name(model),
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -1191,14 +1218,14 @@ class APIBackend:
                         finish_reason = chunk.choices[0].finish_reason
 
                 if LLM_SETTINGS.log_llm_chat_content:
-                    display_resp = resp[:200] + f"... [{len(resp)} chars]" if len(resp) > 200 else resp
+                    display_resp = _preview(resp)
                     logger.info(f"{LogColors.CYAN}Response:{display_resp}{LogColors.END}", tag="llm_messages")
 
             else:
                 resp = response.choices[0].message.content
                 finish_reason = response.choices[0].finish_reason
                 if LLM_SETTINGS.log_llm_chat_content:
-                    display_resp = resp[:200] + f"... [{len(resp)} chars]" if len(resp) > 200 else resp
+                    display_resp = _preview(resp)
                     logger.info(f"{LogColors.CYAN}Response:{display_resp}{LogColors.END}", tag="llm_messages")
                     logger.info(
                         json.dumps(
