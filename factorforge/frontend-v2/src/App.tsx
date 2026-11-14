@@ -9,10 +9,33 @@ import type { PageId } from '@/components/layout/Layout';
 import { TaskProvider, useTaskContext } from '@/context/TaskContext';
 import { LanguageProvider } from '@/context/LanguageContext';
 
+// The active page lives in localStorage so a refresh returns the user to the
+// view they were on instead of dropping them back on Home.
+const PAGE_STORAGE_KEY = 'quantaalpha_last_page';
+const VALID_PAGES: readonly PageId[] = ['home', 'mining_dashboard', 'library', 'backtest', 'settings'];
+
+const readLastPage = (): PageId => {
+  try {
+    const saved = localStorage.getItem(PAGE_STORAGE_KEY);
+    if (saved && VALID_PAGES.includes(saved as PageId)) return saved as PageId;
+  } catch {
+    // Storage can be unavailable (private mode, blocked cookies); use the default.
+  }
+  return 'home';
+};
+
 // Inner component to access context
 const AppContent: React.FC = () => {
-  const [currentPage, setCurrentPage] = useState<PageId>('home');
+  const [currentPage, setCurrentPage] = useState<PageId>(readLastPage);
   const { miningTask } = useTaskContext();
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PAGE_STORAGE_KEY, currentPage);
+    } catch {
+      // Losing the remembered page is not worth failing a render over.
+    }
+  }, [currentPage]);
 
   // Auto-switch to dashboard when task starts
   useEffect(() => {

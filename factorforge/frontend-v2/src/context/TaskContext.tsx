@@ -19,6 +19,7 @@ import {
   startMining as apiStartMining,
   getMiningStatus,
   cancelMining as apiCancelMining,
+  listTasks,
   startBacktest as apiStartBacktest,
   getBacktestStatus,
   getLatestBacktest,
@@ -71,10 +72,55 @@ interface TaskContextValue {
 
 const TaskContext = createContext<TaskContextValue | null>(null);
 
+/** Frontend log retention, matching the cap used by the WebSocket handler. */
+const MAX_LOGS = 2000;
+
+/**
+ * Union two log lists by entry id.
+ *
+ * The backend keeps a rolling 500-entry window while the browser keeps more, so
+ * a REST refresh must not truncate history. Entries are re-sorted by timestamp
+ * because a refresh can fill a gap left by a dropped WebSocket.
+ */
+function mergeLogs(existing: LogEntry[] = [], incoming: LogEntry[] = []): LogEntry[] {
+  if (incoming.length === 0) return existing;
+  const seen = new Set(existing.map((entry) => entry.id));
+  const added = incoming.filter((entry) => !seen.has(entry.id));
+  if (added.length === 0) return existing;
+  return [...existing, ...added]
+    .sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0))
+    .slice(-MAX_LOGS);
+}
+
+/**
+ * Fold a REST task snapshot into the task already held in state.
+ *
+ * The backend is authoritative for status, progress and metrics, but
+ * `top10Factors` is also scraped from log lines on the client, so a snapshot
+ * that has not caught up yet must not blank the list the user is looking at.
+ */
+function mergeTaskSnapshot(prev: Task | null, snapshot: Task): Task {
+  if (!prev) return snapshot;
+  const metrics = snapshot.metrics
+    ? {
+        ...snapshot.metrics,
+        top10Factors: snapshot.metrics.top10Factors?.length
+          ? snapshot.metrics.top10Factors
+          : prev.metrics?.top10Factors ?? [],
+      }
+    : prev.metrics;
+  return {
+    ...snapshot,
+    metrics,
+    logs: mergeLogs(prev.logs, snapshot.logs),
+  };
+}
+
 // ========================== Provider ==========================
 
 export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const BACKTEST_TASK_STORAGE_KEY = 'quantaalpha_last_backtest_task_id';
+  const MINING_TASK_STORAGE_KEY = 'quantaalpha_last_mining_task_id';
   // ---- Backend health ----
   const [backendAvailable, setBackendAvailable] = useState<boolean | null>(null);
 
@@ -114,9 +160,15 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
             updated.progress = msg.data;
             updated.status = msg.data.phase === 'completed' ? 'completed' : 'running';
             break;
-          case 'log':
+          case 'log': {
+            const incoming = msg.data as LogEntry;
+            // The backend replays recent logs on every WebSocket connect; skip
+            // entries we already hold so a reconnect does not duplicate them.
+            if (incoming.id && (updated.logs || []).some((l) => l.id === incoming.id)) {
+              return prev;
+            }
             // Increased frontend log retention limit from 99 to 2000
-            updated.logs = [...(updated.logs || []).slice(-2000), msg.data as LogEntry];
+            updated.logs = [...(updated.logs || []).slice(-2000), incoming];
             
             // Try to extract factor from log message to show it immediately in the list
             // Pattern: "Added new factor: {name} with expression: {expr}"
@@ -171,6 +223,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }
             }
             break;
+          }
           case 'metrics':
             updated.metrics = {
               ...(updated.metrics || {} as RealtimeMetrics),
@@ -199,6 +252,52 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
     },
     [],
+  );
+
+  // Attach live updates (WebSocket + polling fallback) for a mining task.
+  // Shared by a fresh start and by the refresh-restore path below.
+  const attachMiningStream = useCallback(
+    (taskId: string) => {
+      if (miningWsRef.current) {
+        try { miningWsRef.current.close(); } catch {}
+        miningWsRef.current = null;
+      }
+      if (miningPollingRef.current) {
+        clearInterval(miningPollingRef.current);
+        miningPollingRef.current = null;
+      }
+
+      const ws = connectMiningWs(
+        taskId,
+        handleMiningWsMessage,
+        () => {
+          getMiningStatus(taskId).then((r) => {
+            const t = r.data?.task as Task | undefined;
+            if (t) setMiningTask((prev) => mergeTaskSnapshot(prev, t));
+          }).catch(() => {});
+        },
+      );
+      miningWsRef.current = ws;
+
+      miningPollingRef.current = setInterval(async () => {
+        try {
+          const r = await getMiningStatus(taskId);
+          const t = r.data?.task as Task | undefined;
+          if (!t) return;
+          // Apply every poll, not just the terminal one. The WebSocket can drop
+          // (sleep, proxy timeout, backend restart) with no reconnect, and when
+          // that happens this poll is the only thing still advancing the log.
+          setMiningTask((prev) => mergeTaskSnapshot(prev, t));
+          if (t.status === 'completed' || t.status === 'failed') {
+            clearInterval(miningPollingRef.current!);
+            miningPollingRef.current = null;
+          }
+        } catch {
+          // Transient backend hiccup; keep polling.
+        }
+      }, 10000);
+    },
+    [handleMiningWsMessage],
   );
 
   // Start mining (real backend)
@@ -256,39 +355,13 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
             taskData.metrics.mediumQualityFactors = 0;
             taskData.metrics.lowQualityFactors = 0;
         }
+        localStorage.setItem(MINING_TASK_STORAGE_KEY, resp.data.taskId);
         setMiningTask(taskData);
         setMiningEquityCurve([]);
         setMiningDrawdownCurve([]);
         setMiningIcTimeSeries([]);
 
-        // WebSocket
-        const ws = connectMiningWs(
-          resp.data.taskId,
-          handleMiningWsMessage,
-          () => {
-            getMiningStatus(resp.data!.taskId).then((r) => {
-              if (r.data?.task) setMiningTask(r.data.task as Task);
-            });
-          },
-        );
-        miningWsRef.current = ws;
-
-        // Polling fallback
-        miningPollingRef.current = setInterval(async () => {
-          try {
-            const r = await getMiningStatus(resp.data!.taskId);
-            if (r.data?.task) {
-              const t = r.data.task as Task;
-              if (t.status === 'completed' || t.status === 'failed') {
-                setMiningTask(t);
-                clearInterval(miningPollingRef.current!);
-                miningPollingRef.current = null;
-              }
-            }
-          } catch {
-            // ignore
-          }
-        }, 10000);
+        attachMiningStream(resp.data.taskId);
       } catch (err: any) {
         console.error('Failed to start mining task:', err);
         setBackendAvailable(false);
@@ -326,8 +399,56 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setMiningIcTimeSeries([]);
       }
     },
-    [handleMiningWsMessage],
+    [attachMiningStream],
   );
+
+  // Restore the mining task after a page refresh. Only the task ID lives in
+  // the browser; status, progress and logs are re-read from the backend, and a
+  // running task is re-attached to its WebSocket so live logs resume.
+  useEffect(() => {
+    let disposed = false;
+
+    const restore = async () => {
+      const savedId = localStorage.getItem(MINING_TASK_STORAGE_KEY);
+      let restored: Task | undefined;
+
+      if (savedId) {
+        try {
+          const r = await getMiningStatus(savedId);
+          restored = r.data?.task as Task | undefined;
+        } catch {
+          // A backend restart invalidates an in-memory task ID.
+          localStorage.removeItem(MINING_TASK_STORAGE_KEY);
+        }
+      }
+
+      if (!restored) {
+        try {
+          const r = await listTasks();
+          const miningTasks = (r.data?.tasks || []).filter(
+            (t: any) => t?.type !== 'backtest' && t?.config && 'direction' in t.config,
+          ) as Task[];
+          restored = miningTasks.find((t) => t.status === 'running') || miningTasks[0];
+        } catch {
+          return;
+        }
+      }
+
+      if (!restored || disposed) return;
+      localStorage.setItem(MINING_TASK_STORAGE_KEY, restored.taskId);
+      setMiningTask(restored);
+      if (restored.status === 'running') {
+        attachMiningStream(restored.taskId);
+      }
+    };
+
+    void restore();
+    return () => {
+      disposed = true;
+    };
+    // Mount-only: attachMiningStream is stable (depends only on the WS handler).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Public start mining
   const startMining = useCallback(
