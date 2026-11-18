@@ -3,6 +3,7 @@ import { useLanguage } from '@/context/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { FactorRadarChart } from '@/components/FactorRadarChart';
 import { Factor, FactorQuality } from '@/types';
 import { formatNumber, getQualityBadgeClass } from '@/utils';
 import { getFactors, getFactorDetail, getFactorSplitEvaluation, EvaluationSplit, deleteFactors, getFactorCorrelation, FactorCorrelationResponse, listTasks } from '@/services/api';
@@ -772,6 +773,29 @@ export const FactorLibraryPage: React.FC = () => {
           )}
         </CardContent>}
       </Card>
+
+      {/* Factor radar: selected factors, or the top 5 of the current sort */}
+      {filteredFactors.length > 0 && (
+        <FactorRadarChart
+          title={selectedFactorIds.size > 0 ? '已选因子表现雷达图' : '当前排序 Top 5 因子表现雷达图'}
+          factors={filteredFactors.map((factor, index) => ({ factor, rank: index + 1 }))
+            .filter(({ factor }, index) => (selectedFactorIds.size > 0 ? selectedFactorIds.has(factor.factorId) : index < 5))
+            .map(({ factor, rank }) => {
+            const extra = factor as Factor & { annualReturn?: number | null; maxDrawdown?: number | null };
+            return {
+              name: factor.factorName,
+              label: `#${rank}`,
+              ic: factor.ic,
+              rankIc: factor.rankIc,
+              icir: factor.icir,
+              annualReturn: extra.annualReturn,
+              maxDrawdown: extra.maxDrawdown,
+            };
+          })}
+          maxFactors={8}
+          market={(filteredFactors[0] as Factor & { market?: string }).market}
+        />
+      )}
 
       {/* Factor List */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

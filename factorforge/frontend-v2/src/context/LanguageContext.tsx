@@ -23,6 +23,24 @@ const ENGLISH_PHRASES: Array<[string, string]> = [
   ['稳健性检验： ggroup 行业组内排名，并与主结果同时反馈给 LLM', 'Robustness check: rank within ggroup and send it to the LLM with the primary result'],
   ['默认主口径： gsector 板块内排名与行业中性化', 'Primary default: within-gsector ranking and industry neutralization'],
   ['标识口径：PERMNO；成分口径：按 MbrStartDt/MbrEndDt 动态替换', 'Identifier: PERMNO; membership changes dynamically using MbrStartDt/MbrEndDt'],
+  ['在线 Claude（Anthropic OpenAI 兼容接口）', 'Online Claude (Anthropic OpenAI-compatible endpoint)'],
+  ['各轴按显示序列做 min–max 归一化（1 = 最好，0 = 最差），悬停查看原始值。', 'Each axis is min–max normalised across the displayed series (1 = best, 0 = worst); hover for raw values.'],
+  ['训练基准模型（LSTM / Transformer）', 'Train benchmark models (LSTM / Transformer)'],
+  ['基准模型训练中…', 'Training benchmark models…'],
+  ['显示基准模型', 'Show benchmark models'],
+  ['公式定义加载中…', 'Loading formula definitions…'],
+  ['隐藏公式', 'Hide formulas'],
+  ['查看公式', 'Show formulas'],
+  ['归一化', 'Normalisation'],
+  ['当前排序 Top 5 因子表现雷达图', 'Factor performance radar: top 5 of current sort'],
+  ['已选因子表现雷达图', 'Factor performance radar: selected factors'],
+  ['Top 5 因子表现雷达图', 'Factor performance radar: top 5'],
+  ['因子表现雷达图', 'Factor performance radar'],
+  ['暂无可绘制的因子指标', 'No factor metrics to plot yet'],
+  ['隐藏数据表', 'Hide data table'],
+  ['查看数据表', 'Show data table'],
+  ['序列', 'Series'],
+  ['在线 Claude 走 Anthropic 的 OpenAI 兼容接口：API Base URL 已设为 https://api.anthropic.com/v1/，API Key 请填写 Anthropic API Key（sk-ant-...），按 API 用量计费。', 'Online Claude uses Anthropic\'s OpenAI-compatible endpoint: the API Base URL is set to https://api.anthropic.com/v1/; enter an Anthropic API key (sk-ant-...). Billed by API usage.'],
   ['复用本机 Claude Code 登录；默认使用 sonnet 控制成本。保存后重启后端生效。', 'Reuse the local Claude Code login; sonnet is the default for cost control. Restart the backend after saving.'],
   ['训练、验证、测试区间必须按顺序排列且不能重叠', 'Training, validation, and test periods must be ordered and non-overlapping'],
   ['训练、验证和测试区间', 'Training, Validation, and Test Periods'],
@@ -334,6 +352,44 @@ const ENGLISH_PHRASES: Array<[string, string]> = [
   ['生成因子列表', 'Generated Factors'],
   ['执行进度', 'Execution Progress'],
   ['执行时间线', 'Execution Timeline'],
+  ['已停止', 'Stopped'],
+  ['本地 Claude CLI', 'Local Claude CLI'],
+  ['本地 Codex CLI', 'Local Codex CLI'],
+  ['未记录', 'Not recorded'],
+  ['端点', 'Endpoint'],
+  ['模型', 'Model'],
+  ['— 未计费', '— not billed'],
+  ['实际费用', 'Actual cost'],
+  ['LLM 通道', 'LLM channel'],
+  ['费用', 'Cost'],
+  ['单价', 'Unit price'],
+  ['用量', 'Usage'],
+  ['其他', 'Other'],
+  ['已失败', 'Failed'],
+  // Mining dashboard headline cards: the leg the best factor's figures describe.
+  ['最佳因子多空年化收益（净）', 'Best Factor L–S Net Annual Return'],
+  ['最佳因子多头年化收益（净）', 'Best Factor Long Net Annual Return'],
+  ['最佳因子多空夏普比率', 'Best Factor L–S Sharpe'],
+  ['最佳因子多头夏普比率', 'Best Factor Long Sharpe'],
+  ['最佳因子多空最大回撤', 'Best Factor L–S Max Drawdown'],
+  ['最佳因子多头最大回撤', 'Best Factor Long Max Drawdown'],
+  ['最佳因子RankIC', 'Best Factor RankIC'],
+  ['扣除交易成本后的年化统计', 'annualized, net of transaction costs'],
+  ['多空组合', 'long–short portfolio'],
+  ['多头组合', 'long-only portfolio'],
+  // Run time and token card.
+  ['此任务启动时未记录 token 用量', 'Token usage was not recorded when this run started'],
+  ['尚无 LLM 调用记录', 'No LLM calls recorded yet'],
+  ['Token 消耗', 'Token Usage'],
+  ['输入 / 输出', 'Input / Output'],
+  ['LLM 调用', 'LLM Calls'],
+  ['估算费用', 'Est. Cost'],
+  ['运行耗时', 'Run Time'],
+  ['已运行', 'Elapsed'],
+  ['进行中', 'In progress'],
+  ['开始', 'Started'],
+  ['结束', 'Finished'],
+  ['停止', 'Stopped'],
   ['实时日志', 'Live Logs'],
   ['等待日志输出...', 'Waiting for logs...'],
   ['解析需求', 'Parse Request'],
@@ -416,7 +472,9 @@ function translateStaticText(source: string): string {
       output = output.split(zh).join(en);
     }
   }
+  output = output.replace(/第\s*(\d+)\s*\/\s*(\d+)\s*轮/g, 'Round $1/$2');
   output = output.replace(/第\s*(\d+)\s*轮/g, 'Round $1');
+  output = output.replace(/^(\s*)多头\s+(-?[\d.]+%)(\s*)$/, '$1Long $2$3');
   output = output.replace(/第\s*(\d+)\s*组/g, 'Group $1');
   output = output.replace(/已选\s*(\d+)\s*个/g, '$1 selected');
   output = output.replace(/(\d+)\s*个可用因子/g, '$1 available factors');
@@ -437,7 +495,25 @@ const originalText = new WeakMap<Text, string>();
 const translatedText = new WeakMap<Text, string>();
 const originalAttrs = new WeakMap<Element, Map<string, string>>();
 const translatedAttrs = new WeakMap<Element, Map<string, string>>();
-const TRANSLATED_ATTRIBUTES = ['placeholder', 'title', 'aria-label'];
+const TRANSLATED_ATTRIBUTES = ['placeholder', 'title', 'aria-label', 'label'];
+
+/**
+ * Marks a subtree the auto-translator must leave alone.
+ *
+ * The dictionary is a flat phrase list with no sense of context, so text that
+ * must be translated in one place can be wrong in another. The language
+ * switcher is the clearest case: its own label is `中`, which the quality-badge
+ * entry ['中', 'Medium'] rewrites to "Medium" — a switcher a Chinese reader can
+ * no longer recognise. Put this on anything that is already localised in code,
+ * or that is deliberately written in its own language.
+ */
+const NO_TRANSLATE_ATTR = 'data-no-translate';
+
+/** True when `node` sits inside a subtree marked `data-no-translate`. */
+function isTranslationSuppressed(node: Node): boolean {
+  const element = node instanceof Element ? node : node.parentElement;
+  return element?.closest(`[${NO_TRANSLATE_ATTR}]`) != null;
+}
 
 function translateNode(node: Node, language: AppLanguage) {
   if (node.nodeType === Node.TEXT_NODE) {
@@ -462,6 +538,10 @@ function translateNode(node: Node, language: AppLanguage) {
       translatedText.delete(textNode);
       return;
     }
+    // A characterData mutation delivers the text node itself, so the element
+    // guard below never saw it. Checked only once a rewrite is actually due,
+    // which keeps the ancestor walk off the untranslated majority of nodes.
+    if (isTranslationSuppressed(textNode)) return;
     originalText.set(textNode, source);
     translatedText.set(textNode, target);
     textNode.nodeValue = target;
@@ -469,6 +549,8 @@ function translateNode(node: Node, language: AppLanguage) {
   }
 
   if (!(node instanceof Element)) return;
+  // Skip the whole subtree, attributes included.
+  if (node.hasAttribute(NO_TRANSLATE_ATTR)) return;
   let originals = originalAttrs.get(node);
   let translated = translatedAttrs.get(node);
   if (!originals) {

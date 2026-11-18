@@ -4,6 +4,7 @@ import { LiveCharts } from '@/components/LiveCharts';
 import { ChatInput } from '@/components/ChatInput';
 import { FactorStatsRow } from '@/components/FactorStatsRow';
 import { FactorList } from '@/components/FactorList';
+import { FactorRadarChart } from '@/components/FactorRadarChart';
 import { useTaskContext } from '@/context/TaskContext';
 import { Layout } from '@/components/layout/Layout';
 import type { PageId } from '@/components/layout/Layout';
@@ -19,6 +20,7 @@ export const MiningDashboardPage: React.FC<MiningDashboardPageProps> = ({ onNavi
     miningDrawdownCurve: drawdownCurve,
     startMining,
     stopMining,
+    miningStartError,
   } = useTaskContext();
 
   // If no task, this page shouldn't be active (or show empty state)
@@ -50,7 +52,7 @@ export const MiningDashboardPage: React.FC<MiningDashboardPageProps> = ({ onNavi
     >
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <div className="lg:col-span-1">
-          <ProgressSidebar progress={task.progress} />
+          <ProgressSidebar progress={task.progress} status={task.status} task={task} />
         </div>
         <div className="lg:col-span-3">
           <LiveCharts
@@ -79,6 +81,20 @@ export const MiningDashboardPage: React.FC<MiningDashboardPageProps> = ({ onNavi
            />
         </div>
         <div className="lg:col-span-4">
+           <FactorRadarChart
+             title="Top 5 因子表现雷达图"
+             market={task.config?.market}
+             factors={(task.metrics?.top10Factors || []).map((f) => ({
+               name: f.factorName,
+               ic: f.ic,
+               rankIc: f.rankIc,
+               icir: f.icir,
+               annualReturn: f.portfolioStats?.long_short?.annualizedNetReturn ?? f.annualReturn,
+               maxDrawdown: f.portfolioStats?.long_short?.maxDrawdown ?? f.maxDrawdown,
+             }))}
+           />
+        </div>
+        <div className="lg:col-span-4">
            <FactorList metrics={task.metrics || null} />
         </div>
       </div>
@@ -88,6 +104,7 @@ export const MiningDashboardPage: React.FC<MiningDashboardPageProps> = ({ onNavi
         onSubmit={startMining}
         onStop={stopMining}
         isRunning={task?.status === 'running'}
+        startError={miningStartError}
       />
     </Layout>
   );

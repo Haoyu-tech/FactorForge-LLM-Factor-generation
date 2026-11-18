@@ -1,5 +1,7 @@
-// Task status
-export type TaskStatus = 'idle' | 'running' | 'completed' | 'failed';
+// Task status. `cancelled` is what the backend sets when a run is stopped from
+// the UI (DELETE /api/v1/mining/{id}); it was missing here, so callers silently
+// treated a stopped run as still running.
+export type TaskStatus = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 // Execution phase
 export type ExecutionPhase =
@@ -69,6 +71,8 @@ export interface RealtimeMetrics {
     quality?: 'high' | 'medium' | 'low';
     qualityScore?: number;
     frequency?: string;
+    /** Portfolio leg that annualReturn / sharpeRatio / maxDrawdown describe. */
+    preferredPortfolioLeg?: 'long' | 'long_short';
     portfolioStats?: Record<'long' | 'short' | 'long_short', {
       annualizedGrossReturn?: number | null;
       annualizedNetReturn?: number | null;
@@ -115,10 +119,13 @@ export interface RealtimeMetrics {
     cumulativeCurve?: Array<{date: string, value: number}>;
   }>;
 
-  // Return metrics
+  // Return metrics. For the best factor these are the net, annualized figures
+  // of `bestFactorLeg` (long–short for US/crypto, long-only for A-shares).
   annualReturn: number;
   sharpeRatio: number;
   maxDrawdown: number;
+  bestFactorLeg?: 'long' | 'long_short' | null;
+  bestFactorLongReturn?: number | null;
 
   // Factor statistics
   totalFactors: number;
@@ -204,8 +211,60 @@ export interface Task {
   metrics?: RealtimeMetrics;
   result?: BacktestResult;
   logs: LogEntry[];
+  /** LLM token totals for the run, summed by the backend from every call. */
+  usage?: TokenUsage;
+  /** How this run reaches its LLM, recorded at launch. */
+  llm?: LlmChannel | null;
   createdAt: string;
+  /** When the run completed, failed or was stopped; null while running. */
+  completedAt?: string | null;
+  durationSeconds?: number | null;
   updatedAt: string;
+}
+
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  calls: number;
+  /** Cost the provider actually reported. Null means none was reported, which
+   *  is not the same as a cost of zero. */
+  costUsd?: number | null;
+  /** Per-model breakdown; a run can mix a chat model and an embedding model. */
+  byModel?: ModelUsage[];
+}
+
+/** How a model was reached. CLI calls go through a local subscription-backed
+ *  binary, API calls are billed per token by the gateway. */
+export type UsageTransport = 'cli' | 'api' | 'other';
+
+/**
+ * Which LLM channel a run was configured to use, recorded when it launched.
+ *
+ * Taken from configuration rather than from call records, so it is known before
+ * the first call and still known for a run that never made one.
+ */
+export interface LlmChannel {
+  channel: 'claude_cli' | 'codex_cli' | 'openai_api';
+  transport: UsageTransport;
+  /** Human label, e.g. "本地 Claude CLI". */
+  label: string;
+  model: string;
+  /** Host of the API endpoint; null for local CLI channels. */
+  endpoint?: string | null;
+}
+
+export interface ModelUsage {
+  /** Model the provider says served the call, or 'unknown' if it said nothing. */
+  model: string;
+  transport: UsageTransport;
+  /** Raw provider tag, e.g. 'claude_cli', 'codex_cli', 'openai'. */
+  source: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  calls: number;
+  costUsd?: number | null;
 }
 
 // API Response
@@ -222,6 +281,7 @@ export type WsMessageType =
   | 'metrics'
   | 'log'
   | 'result'
+  | 'usage'
   | 'error';
 
 // WebSocket message
