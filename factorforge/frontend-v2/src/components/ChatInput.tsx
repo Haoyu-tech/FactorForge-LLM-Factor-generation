@@ -7,9 +7,11 @@ interface ChatInputProps {
   onSubmit: (config: TaskConfig) => void;
   onStop?: () => void;
   isRunning?: boolean;
+  /** Why the last start was refused, e.g. a run is already active elsewhere. */
+  startError?: string | null;
 }
 
-export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunning = false }) => {
+export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunning = false, startError = null }) => {
   const { language } = useLanguage();
   const zh = language === 'zh';
   const [input, setInput] = useState('');
@@ -62,6 +64,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
     <div className="fixed bottom-0 left-0 right-0 z-50 pb-6">
       <div className="container mx-auto px-6">
         
+        {/* A start the backend refused: say so instead of failing silently. */}
+        {startError && (
+          <div className="mx-auto mb-3 max-w-3xl rounded-xl border border-amber-300 bg-amber-50/95 px-4 py-2.5 text-sm text-amber-900 shadow-sm">
+            {startError}
+          </div>
+        )}
+
         {/* Example Prompts */}
         {!input && !isRunning && (
           <div className="flex flex-wrap justify-center gap-2 mb-3 overflow-x-auto pb-2 scrollbar-hide">

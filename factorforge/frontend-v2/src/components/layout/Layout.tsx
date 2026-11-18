@@ -83,7 +83,14 @@ export const Layout: React.FC<LayoutProps> = ({
               </nav>
             )}
 
-            <div className="flex items-center rounded-xl border border-white/10 bg-white/[0.05] p-1" title={language === 'zh' ? '切换语言' : 'Switch language'}>
+            {/* The switcher labels each language in its own script, so the
+                auto-translator must not touch it: '中' would otherwise be
+                rewritten to 'Medium' by the factor-quality dictionary entry. */}
+            <div
+              data-no-translate=""
+              className="flex items-center rounded-xl border border-white/10 bg-white/[0.05] p-1"
+              title={language === 'zh' ? '切换语言' : 'Switch language'}
+            >
               <Languages className="mx-2 h-4 w-4 text-slate-400" />
               {(['zh', 'en'] as const).map((item) => (
                 <button
