@@ -2314,6 +2314,12 @@ async def _run_backtest(task_id: str, req: BacktestStartRequest, config_path: st
             effective_config.setdefault("dataset", {})["label"] = "Ref($ret_total, -1)"
         if provider:
             effective_config.setdefault("data", {})["provider_uri"] = provider
+            # runner.py and custom_factor_calculator.py prefer QLIB_DATA_DIR /
+            # QLIB_PROVIDER_URI over the YAML provider, so the market-specific
+            # provider must also win in the subprocess env; otherwise the
+            # generic .env value (e.g. cn_data) silently overrides WRDS.
+            env["QLIB_DATA_DIR"] = provider
+            env["QLIB_PROVIDER_URI"] = provider
         date_prefix = "CRYPTO" if market_mode == "crypto" else ("CN" if market_mode == "cn" else "US")
 
         def market_date(key: str) -> Optional[str]:
@@ -2339,7 +2345,13 @@ async def _run_backtest(task_id: str, req: BacktestStartRequest, config_path: st
             effective_config.setdefault("data", {})["end_time"] = test_segment[1]
             effective_config.setdefault("backtest", {}).setdefault("backtest", {})["start_time"] = test_segment[0]
             effective_config.setdefault("backtest", {}).setdefault("backtest", {})["end_time"] = test_segment[1]
-        override_dir = Path(dotenv.get("DATA_RESULTS_DIR", str(PROJECT_ROOT / "data" / "results"))) / "backtest_overrides"
+        # The backtest subprocess runs with cwd=PROJECT_ROOT while this server
+        # may run from frontend-v2/, so a relative DATA_RESULTS_DIR must be
+        # anchored at the project root or the child cannot find the override.
+        results_base = Path(dotenv.get("DATA_RESULTS_DIR", str(PROJECT_ROOT / "data" / "results")))
+        if not results_base.is_absolute():
+            results_base = PROJECT_ROOT / results_base
+        override_dir = results_base / "backtest_overrides"
         override_dir.mkdir(parents=True, exist_ok=True)
         override_path = override_dir / f"{task_id}.yaml"
         temporary_config_path = override_path
