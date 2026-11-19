@@ -27,6 +27,26 @@ from quantaalpha.backtest.long_short_analytics import (
 )
 
 
+def _rank_within_dates_inplace(values: np.ndarray, date_codes: np.ndarray, chunk: int = 16) -> None:
+    """Replace each column with its per-date pct rank minus 0.5, in place.
+
+    Equivalent to ``groupby(date).transform(lambda x: x.rank(pct=True) - 0.5
+    if len(x) > 1 else 0)`` per column (average ties, NaN kept as NaN, single-row
+    dates set to 0), but vectorized and processed a few columns at a time so
+    no full-size float64 temporary is created.
+    """
+    if values.size == 0:
+        return
+    single_row_date = np.bincount(date_codes)[date_codes] <= 1
+    for start in range(0, values.shape[1], chunk):
+        stop = min(start + chunk, values.shape[1])
+        block = pd.DataFrame(values[:, start:stop])
+        ranked = block.groupby(date_codes, sort=False).rank(pct=True).to_numpy(dtype=np.float64)
+        ranked -= 0.5
+        ranked[single_row_date] = 0.0
+        values[:, start:stop] = ranked
+
+
 class BacktestRunner:
     """Backtest executor."""
 
@@ -112,6 +132,11 @@ class BacktestRunner:
         correlation_report = {'enabled': False}
         if custom_factors:
             computed_factors = self._compute_custom_factors(custom_factors, skip_compute=skip_uncached)
+            if computed_factors is not None and not computed_factors.empty:
+                # A daily S&P 500 panel is ~4.9M rows x ~150 factors (~5.8 GB in
+                # float64). Every downstream step cross-sectionally ranks the
+                # factors, so float32 is ample and halves each in-memory copy.
+                computed_factors = computed_factors.astype(np.float32)
             n_computed = len(computed_factors.columns) if computed_factors is not None and not computed_factors.empty else 0
             print(f"[2/4] Computed custom factors: {n_computed}")
             if correlation_pruning and n_computed > 1:
@@ -174,6 +199,12 @@ class BacktestRunner:
             logger.debug("[2/4] No custom factors, skip")
 
         dataset = self._create_dataset(factor_expressions, computed_factors)
+        # The dataset holds its own preprocessed copy; release the raw panel
+        # before model training so the two never coexist in memory.
+        n_custom_used = (
+            len(computed_factors.columns) if computed_factors is not None else len(custom_factors)
+        )
+        computed_factors = None
         print("[3/4] Dataset created")
 
         metrics = self._train_and_backtest(
@@ -198,9 +229,7 @@ class BacktestRunner:
         total_time = time.time() - start_time_total
         self._print_results(metrics, total_time)
         self._save_results(metrics, exp_name, factor_source or self.config['factor_source']['type'], 
-                          len(factor_expressions) + (
-                              len(computed_factors.columns) if computed_factors is not None else len(custom_factors)
-                          ), total_time,
+                          len(factor_expressions) + n_custom_used, total_time,
                           output_name=output_name)
         
         return metrics
@@ -329,8 +358,13 @@ class BacktestRunner:
             if qlib_factors is not None and not qlib_factors.empty:
                 all_feature_dfs.append(qlib_factors)
         
-        features_df = pd.concat(all_feature_dfs, axis=1)
-        features_df = features_df.loc[:, ~features_df.columns.duplicated()]
+        if len(all_feature_dfs) == 1:
+            features_df = all_feature_dfs[0]
+        else:
+            features_df = pd.concat(all_feature_dfs, axis=1)
+        del all_feature_dfs
+        if features_df.columns.duplicated().any():
+            features_df = features_df.loc[:, ~features_df.columns.duplicated()]
         logger.debug(f"  Total factor count: {len(features_df.columns)}")
 
         def _normalize_multiindex(df, df_name):
@@ -377,12 +411,15 @@ class BacktestRunner:
                     df.index.get_level_values('datetime'), errors='raise'
                 )
                 instrument_values = df.index.get_level_values('instrument').astype(str)
-                df = df.copy()
+                # Shallow copy: replace the index without duplicating the
+                # (multi-GB) values, and sort only when actually unsorted.
+                df = df.copy(deep=False)
                 df.index = pd.MultiIndex.from_arrays(
                     [datetime_values, instrument_values],
                     names=['datetime', 'instrument'],
                 )
-                df = df.sort_index()
+                if not df.index.is_monotonic_increasing:
+                    df = df.sort_index()
                 logger.debug(
                     f"  {df_name} index normalized to "
                     "(datetime64[ns], string instrument)"
@@ -450,44 +487,78 @@ class BacktestRunner:
             features_df = merged[feature_cols]
             label_df = merged[label_cols]
         else:
-            features_df = features_df.loc[common_index]
-            label_df = label_df.loc[common_index]
-        
+            if not features_df.index.equals(common_index):
+                features_df = features_df.loc[common_index]
+            if not label_df.index.equals(common_index):
+                label_df = label_df.loc[common_index]
+
         logger.debug(f"  Data rows: {len(features_df)}")
         if len(features_df) == 0:
             raise ValueError("No rows after index alignment; cannot run backtest")
-        combined_df = pd.concat([features_df, label_df], axis=1)
-        from qlib.data.dataset.processor import Fillna, ProcessInf, CSRankNorm, DropnaLabel
+        # Preprocess in one float32 buffer instead of concat/fillna/replace/
+        # per-column groupby-lambda/copy, each of which duplicated the whole
+        # multi-GB panel. Semantics are unchanged: NaN/inf features -> 0, then
+        # per-date pct-rank - 0.5 (0 for single-stock dates) on all rows, then
+        # drop rows with a missing label and rank the label the same way.
         feature_cols = list(features_df.columns)
         label_cols = list(label_df.columns)
-        combined_df[feature_cols] = combined_df[feature_cols].fillna(0)
-        combined_df[feature_cols] = combined_df[feature_cols].replace([np.inf, -np.inf], 0)
-        dt_level = combined_df.index.names[0] if combined_df.index.names[0] else 0
-        for col in feature_cols:
-            combined_df[col] = combined_df.groupby(level=dt_level)[col].transform(
-                lambda x: (x.rank(pct=True) - 0.5) if len(x) > 1 else 0
-            )
-        combined_df = combined_df.dropna(subset=label_cols)
-        for col in label_cols:
-            combined_df[col] = combined_df.groupby(level=dt_level)[col].transform(
-                lambda x: (x.rank(pct=True) - 0.5) if len(x) > 1 else 0
-            )
-        
-        logger.debug(f"  Rows after preprocessing: {len(combined_df)}")
-        feature_tuples = [('feature', col) for col in feature_cols]
-        label_tuples = [('label', col) for col in label_cols]
-        
-        combined_df_multi = combined_df.copy()
-        combined_df_multi.columns = pd.MultiIndex.from_tuples(
-            feature_tuples + label_tuples
+        row_index = features_df.index
+        feature_values = features_df.to_numpy(dtype=np.float32, copy=True)
+        del features_df
+        np.nan_to_num(feature_values, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        date_codes = pd.factorize(row_index.get_level_values(0))[0]
+        _rank_within_dates_inplace(feature_values, date_codes)
+
+        label_values = label_df.to_numpy(dtype=np.float64, copy=True)
+        del label_df
+        keep = ~np.isnan(label_values).any(axis=1)
+        if not keep.all():
+            feature_values = feature_values[keep]
+            label_values = label_values[keep]
+            row_index = row_index[keep]
+            date_codes = pd.factorize(row_index.get_level_values(0))[0]
+        _rank_within_dates_inplace(label_values, date_codes)
+
+        logger.debug(f"  Rows after preprocessing: {len(row_index)}")
+        combined_df_multi = pd.DataFrame(
+            feature_values,
+            index=row_index,
+            columns=pd.MultiIndex.from_tuples([('feature', col) for col in feature_cols]),
+            copy=False,
         )
-        
+        del feature_values
+        for position, col in enumerate(label_cols):
+            combined_df_multi[('label', col)] = label_values[:, position]
+        del label_values
+        combined_df = combined_df_multi  # row count for the log line below
+
         class PrecomputedDataHandler(DataHandler):
             """DataHandler for precomputed data."""
             
             def __init__(self, data_df, segments):
                 self._data = data_df
                 self._segments = segments
+                try:
+                    self._dates = data_df.index.get_level_values('datetime')
+                except KeyError:
+                    self._dates = data_df.index.get_level_values(0)
+                self._dates_sorted = bool(self._dates.is_monotonic_increasing)
+
+            def _rows(self, selector):
+                """Rows for a (start, end) selector; a cheap slice when dates are sorted."""
+                data = self._data
+                if isinstance(selector, slice):
+                    if selector.start is None or selector.stop is None:
+                        return data
+                    selector = (selector.start, selector.stop)
+                if not (isinstance(selector, (tuple, list)) and len(selector) == 2):
+                    return data
+                start, end = pd.Timestamp(selector[0]), pd.Timestamp(selector[1])
+                if self._dates_sorted:
+                    lo = self._dates.searchsorted(start, side='left')
+                    hi = self._dates.searchsorted(end, side='right')
+                    return data.iloc[lo:hi]
+                return data.loc[(self._dates >= start) & (self._dates <= end)]
             
             @property
             def data_loader(self):
@@ -502,33 +573,17 @@ class BacktestRunner:
             
             def fetch(self, selector=None, level='datetime', col_set='feature',
                      data_key=None, squeeze=False, proc_func=None):
+                # Select the date segment first (DatasetH passes YAML segments
+                # as two-item lists), then the columns, so only the segment is
+                # ever copied rather than the full multi-decade panel.
+                rows = self._rows(selector) if selector is not None else self._data
                 if col_set in ('feature', 'label'):
-                    result = self._data[col_set].copy()
-                elif col_set == '__all' or col_set is None:
-                    result = self._data.copy()
+                    result = rows[col_set].copy()
+                elif isinstance(col_set, (list, tuple)):
+                    result = rows[list(col_set)].copy()
                 else:
-                    if isinstance(col_set, (list, tuple)):
-                        result = self._data[list(col_set)].copy()
-                    else:
-                        result = self._data.copy()
-                if selector is not None:
-                    try:
-                        dates = result.index.get_level_values('datetime')
-                    except KeyError:
-                        dates = result.index.get_level_values(0)
-                    # DatasetH stores YAML segments as two-item lists and
-                    # passes them straight through to handler.fetch().
-                    if isinstance(selector, (tuple, list)) and len(selector) == 2:
-                        start, end = selector
-                        mask = (dates >= pd.Timestamp(start)) & (dates <= pd.Timestamp(end))
-                        result = result.loc[mask]
-                    elif isinstance(selector, slice):
-                        start = selector.start
-                        end = selector.stop
-                        if start is not None and end is not None:
-                            mask = (dates >= pd.Timestamp(start)) & (dates <= pd.Timestamp(end))
-                            result = result.loc[mask]
-                
+                    result = rows.copy()
+
                 if squeeze and result.shape[1] == 1:
                     result = result.iloc[:, 0]
                 

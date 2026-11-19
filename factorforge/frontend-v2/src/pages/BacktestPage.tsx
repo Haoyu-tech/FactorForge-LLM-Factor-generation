@@ -224,7 +224,9 @@ export const BacktestPage: React.FC = () => {
   const [qualityCounts, setQualityCounts] = useState({ all: 0, high: 0, medium: 0, low: 0 });
   const [isStarting, setIsStarting] = useState(false);
   const [backtestConfig, setBacktestConfig] = useState<BacktestConfigResponse | null>(null);
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const logsContainerRef = useRef<HTMLDivElement>(null);
+  // Follow new log lines only while the user is at the bottom of the log box.
+  const followLogsRef = useRef(true);
 
   // Cache status state
   const [cacheStatus, setCacheStatus] = useState<CacheStatusResponse | null>(null);
@@ -303,9 +305,20 @@ export const BacktestPage: React.FC = () => {
     }
   }, [factorSource, qualityFilter, qualityCounts, kellyMissingThreshold, backtestConfig]);
 
-  // Auto-scroll logs
+  // Auto-scroll logs. Scroll only the log box itself (scrollIntoView would
+  // also scroll the page), and only while the user has not scrolled up.
+  const handleLogsScroll = () => {
+    const box = logsContainerRef.current;
+    if (!box) return;
+    followLogsRef.current = box.scrollHeight - box.clientHeight - box.scrollTop < 40;
+  };
+
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const box = logsContainerRef.current;
+    if (!box || !followLogsRef.current) return;
+    requestAnimationFrame(() => {
+      box.scrollTop = box.scrollHeight;
+    });
   }, [logs]);
 
   // -- Start backtest --
@@ -374,7 +387,10 @@ export const BacktestPage: React.FC = () => {
     <div className="glass rounded-xl p-4 text-center">
       <div className="text-xs text-muted-foreground mb-1">{label}</div>
       <div className="text-lg font-bold text-foreground">
-        {typeof value === 'number' ? value.toFixed(4) : value ?? '--'}
+        {/* Percentages: 2 decimals; ratios such as IC / Sharpe keep 4. */}
+        {typeof value === 'number' && Number.isFinite(value)
+          ? value.toFixed(unit === '%' ? 2 : 4)
+          : value ?? '--'}
         {unit && <span className="text-xs text-muted-foreground ml-1">{unit}</span>}
       </div>
     </div>
@@ -986,9 +1002,9 @@ export const BacktestPage: React.FC = () => {
 
             {/* Progress bar */}
             <div className="mb-4">
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-muted-foreground">{task.progress?.message || '等待中...'}</span>
-                <span className="text-muted-foreground">
+              <div className="flex justify-between gap-3 text-sm mb-1">
+                <span className="text-muted-foreground min-w-0 [overflow-wrap:anywhere]">{task.progress?.message || '等待中...'}</span>
+                <span className="text-muted-foreground flex-shrink-0">
                   {task.status === 'completed' ? '100%' :
                    task.status === 'failed' ? '失败' :
                    task.progress?.progress > 0 ? `${Math.round(task.progress.progress)}%` :
@@ -1023,7 +1039,9 @@ export const BacktestPage: React.FC = () => {
             </div>
 
             {/* Task info */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-muted-foreground">
+            {/* min-w-0 + anywhere-wrapping keep long values (e.g. the factor
+                JSON file name, which has no spaces) inside their own column. */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-muted-foreground [&>div]:min-w-0 [&>div]:[overflow-wrap:anywhere]">
               <div>任务 ID: <span className="font-mono text-foreground">{task.taskId}</span></div>
               <div>开始时间: {new Date(task.createdAt).toLocaleTimeString()}</div>
               <div>因子源: {task.config?.factorSource === 'kelly_jkp' ? 'WRDS Kelly 153' : (task.config?.factorJson || selectedLibrary)}</div>
@@ -1166,7 +1184,11 @@ export const BacktestPage: React.FC = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="bg-black/50 rounded-lg p-4 max-h-[400px] overflow-y-auto font-mono text-xs">
+            <div
+              ref={logsContainerRef}
+              onScroll={handleLogsScroll}
+              className="bg-black/50 rounded-lg p-4 max-h-[400px] overflow-y-auto font-mono text-xs"
+            >
               {logs.length === 0 && isRunning && (
                 <div className="text-muted-foreground flex items-center gap-2">
                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -1190,7 +1212,6 @@ export const BacktestPage: React.FC = () => {
                   </span>
                 </div>
               ))}
-              <div ref={logsEndRef} />
             </div>
           </CardContent>
         </Card>
