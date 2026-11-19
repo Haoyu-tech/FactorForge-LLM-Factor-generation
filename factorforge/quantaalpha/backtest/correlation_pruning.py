@@ -8,7 +8,16 @@ import numpy as np
 import pandas as pd
 
 
-def _normalize_index(frame: pd.DataFrame) -> pd.DataFrame:
+def _normalize_index(
+    frame: pd.DataFrame,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> pd.DataFrame:
+    """Return a (datetime, instrument) sorted copy, optionally limited to [start, end].
+
+    The date filter is applied before copying so a full multi-decade panel is
+    never duplicated when only a validation window is needed.
+    """
     if not isinstance(frame.index, pd.MultiIndex) or frame.index.nlevels != 2:
         raise ValueError("Factor correlation pruning requires a two-level index")
     names = [str(name).lower() if name is not None else "" for name in frame.index.names]
@@ -26,12 +35,18 @@ def _normalize_index(frame: pd.DataFrame) -> pd.DataFrame:
                 date_pos = pos
                 break
     instrument_pos = 1 - date_pos
+    dates = pd.to_datetime(frame.index.get_level_values(date_pos))
+    if start is not None or end is not None:
+        mask = np.ones(len(frame), dtype=bool)
+        if start is not None:
+            mask &= np.asarray(dates >= pd.Timestamp(start))
+        if end is not None:
+            mask &= np.asarray(dates <= pd.Timestamp(end))
+        frame = frame[mask]
+        dates = dates[mask]
     result = frame.copy()
     result.index = pd.MultiIndex.from_arrays(
-        [
-            pd.to_datetime(frame.index.get_level_values(date_pos)),
-            frame.index.get_level_values(instrument_pos).astype(str),
-        ],
+        [dates, frame.index.get_level_values(instrument_pos).astype(str)],
         names=["datetime", "instrument"],
     )
     return result.sort_index()
@@ -45,9 +60,7 @@ def monthly_cross_sectional_spearman(
     min_observations: int = 20,
 ) -> tuple[pd.DataFrame, int]:
     """Median of month-end cross-sectional Spearman correlation matrices."""
-    frame = _normalize_index(factors).replace([np.inf, -np.inf], np.nan)
-    dates = frame.index.get_level_values("datetime")
-    frame = frame[(dates >= pd.Timestamp(start)) & (dates <= pd.Timestamp(end))]
+    frame = _normalize_index(factors, start, end).replace([np.inf, -np.inf], np.nan)
     if frame.empty:
         raise ValueError(f"No factor data in validation interval {start} to {end}")
 
@@ -76,12 +89,10 @@ def validation_rank_ic_scores(
     end: str,
 ) -> Dict[str, float]:
     """Absolute mean monthly validation RankIC, used only to choose representatives."""
-    frame = _normalize_index(factors)
+    frame = _normalize_index(factors, start, end)
     target_frame = target.rename("__target__").to_frame()
-    target_frame = _normalize_index(target_frame)
+    target_frame = _normalize_index(target_frame, start, end)
     joined = frame.join(target_frame, how="inner")
-    dates = joined.index.get_level_values("datetime")
-    joined = joined[(dates >= pd.Timestamp(start)) & (dates <= pd.Timestamp(end))]
     values: Dict[str, list[float]] = {column: [] for column in frame.columns}
     for _, group in joined.groupby(level="datetime", sort=True):
         y = group["__target__"]

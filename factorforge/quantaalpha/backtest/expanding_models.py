@@ -65,6 +65,19 @@ class ExpandingQlibModel:
 
     @staticmethod
     def _clean(features: pd.DataFrame, fill_values: pd.Series | None = None):
+        # Fast path: already-numeric, fully finite features (e.g. the ranked
+        # precomputed panel) need no coercion or filling. The general path
+        # below builds several full-size float64 temporaries, which for a
+        # multi-million-row panel costs tens of GB.
+        if len(features.columns) and all(
+            pd.api.types.is_float_dtype(dtype) or pd.api.types.is_integer_dtype(dtype)
+            for dtype in features.dtypes
+        ):
+            as_float = features.astype("float32", copy=False)
+            if np.isfinite(as_float.to_numpy()).all():
+                if fill_values is None:
+                    fill_values = as_float.median(axis=0).astype("float64").fillna(0.0)
+                return as_float, fill_values
         cleaned = features.apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
         if fill_values is None:
             fill_values = cleaned.median(axis=0).fillna(0.0)
@@ -179,9 +192,12 @@ class ExpandingQlibModel:
             x, y = self._prepare(dataset, name, True)
             x = x.reindex(columns=self.feature_columns)
             historical.append((x, pd.to_numeric(y, errors="coerce")))
-        all_x = pd.concat([item[0] for item in historical]).sort_index()
+        all_x = pd.concat([item[0] for item in historical])
+        if not all_x.index.is_monotonic_increasing:
+            all_x = all_x.sort_index()
         all_y = pd.concat([item[1] for item in historical]).reindex(all_x.index)
         test_x, _ = historical[-1]
+        del historical  # all_x already holds train/valid/test; free the parts
         test_dates = self._dates(test_x.index)
         months = pd.Index(test_dates.to_period("M").unique()).sort_values()
         outputs: list[pd.Series] = []
