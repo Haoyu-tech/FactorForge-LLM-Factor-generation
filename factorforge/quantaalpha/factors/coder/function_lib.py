@@ -384,6 +384,71 @@ def SUMAC(df:pd.DataFrame, p:int=10):
 
 
 
+def _as_series(obj):
+    """Single-column DataFrame -> Series; Series unchanged; else None."""
+    if isinstance(obj, pd.Series):
+        return obj
+    if isinstance(obj, pd.DataFrame) and obj.shape[1] == 1:
+        return obj.iloc[:, 0]
+    return None
+
+
+def _fast_rolling_ols(df1, df2, p: int):
+    """Vectorized per-instrument rolling OLS of df1 (y) on df2 (x) with intercept.
+
+    Returns (beta, residual_at_window_end) as Series on df1's index, or None when
+    the inputs are not two aligned (datetime, instrument) series, in which case
+    callers fall back to the original row-by-row lstsq loop.
+
+    Matches the loop: inputs are zero-filled, the first p-1 rows of each
+    instrument are NaN, and every window holds exactly p rows. For a window
+    whose x is (numerically) constant, lstsq returns the minimum-norm solution
+    of [x, 1] @ [b, a] = y, i.e. b = c * mean(y) / (c**2 + 1) and residual
+    y_t - mean(y); the same is reproduced here.
+    """
+    y, x = _as_series(df1), _as_series(df2)
+    if y is None or x is None or not isinstance(p, (int, np.integer)) or p < 2:
+        return None
+    if not isinstance(y.index, pd.MultiIndex) or 'instrument' not in y.index.names:
+        return None
+    if not y.index.equals(x.index):
+        return None
+
+    yv = pd.to_numeric(y, errors='coerce').fillna(0).to_numpy(dtype=np.float64)
+    xv = pd.to_numeric(x, errors='coerce').fillna(0).to_numpy(dtype=np.float64)
+    codes, _ = pd.factorize(y.index.get_level_values('instrument'), sort=True)
+    # groupby('instrument') keeps original row order inside each group.
+    order = np.argsort(codes, kind='stable')
+    c, ys, xs = codes[order], pd.Series(yv[order]), pd.Series(xv[order])
+
+    n = len(c)
+    starts = np.r_[0, np.flatnonzero(np.diff(c)) + 1]
+    lengths = np.diff(np.r_[starts, n])
+    pos_in_group = np.arange(n) - np.repeat(starts, lengths)
+    full_window = pos_in_group >= p - 1  # window lies inside one instrument
+
+    rx, ry = xs.rolling(p), ys.rolling(p)
+    mean_x = rx.mean().to_numpy()
+    mean_y = ry.mean().to_numpy()
+    var_x = rx.var(ddof=0).to_numpy()
+    cov_xy = rx.cov(ys, ddof=0).to_numpy()
+
+    degenerate = var_x <= 1e-10 * (var_x + mean_x ** 2)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        beta = np.where(degenerate, mean_x * mean_y / (mean_x ** 2 + 1.0), cov_xy / var_x)
+    resid = np.where(degenerate, ys.to_numpy() - mean_y,
+                     (ys.to_numpy() - mean_y) - beta * (xs.to_numpy() - mean_x))
+    beta[~full_window] = np.nan
+    resid[~full_window] = np.nan
+
+    out_beta = np.empty(n); out_resid = np.empty(n)
+    out_beta[order] = beta
+    out_resid[order] = resid
+    beta_s = pd.Series(out_beta, index=y.index).sort_index()
+    resid_s = pd.Series(out_resid, index=y.index).sort_index()
+    return beta_s, resid_s
+
+
 def calculate_beta(y, x):
     """Regression coefficient (beta)."""
     X = np.vstack([x, np.ones(len(x))]).T
@@ -431,10 +496,14 @@ def REGBETA(df1: pd.DataFrame, df2: pd.DataFrame, p: int = 5, n_jobs: int = -1):
     
     else:
         assert df1.index.equals(df2.index), "df1 and df2 indices must align"
-        
+
+        fast = _fast_rolling_ols(df1, df2, p)
+        if fast is not None:
+            return fast[0]
+
         df1 = df1.fillna(0)
         df2 = df2.fillna(0)
-        
+
         df1_groups = list(df1.groupby('instrument'))
         df2_groups = list(df2.groupby('instrument'))
         
@@ -513,12 +582,17 @@ def REGRESI(df1: pd.DataFrame, df2: pd.DataFrame, p: int = 5, n_jobs: int = -1):
                     assert df1.index.equals(df2.index), "df1 and df2 indices must align"
             else:
                 assert df1.index.equals(df2.index), "df1 and df2 indices must align"
-        
+
+        if isinstance(df2.index, pd.MultiIndex) and 'instrument' in df2.index.names:
+            fast = _fast_rolling_ols(df1, df2, p)
+            if fast is not None:
+                return fast[1]
+
         df1 = df1.fillna(0)
         df2 = df2.fillna(0)
-        
+
         df1_groups = list(df1.groupby('instrument'))
-        
+
         if isinstance(df2.index, pd.MultiIndex) and 'instrument' in df2.index.names:
             df2_groups = list(df2.groupby('instrument'))
             if len(df1_groups) != len(df2_groups):
