@@ -6,6 +6,17 @@ import pandas as pd
 
 VALID_FREQUENCIES = ("day", "week", "month")
 
+
+def default_periods_per_year(environment=None) -> float:
+    """Return observations per year: 252 trading days for equities, 365.25 for crypto.
+
+    Crypto perpetuals trade every calendar day, and 365.25 is the average
+    calendar year including leap years. Equity panels hold trading days only.
+    """
+    import os
+    env = os.environ if environment is None else environment
+    return 365.25 if str(env.get("MARKET_MODE", "us")).strip().lower() == "crypto" else 252.0
+
 def _series(data, name):
     s = data if isinstance(data, pd.Series) else data.iloc[:, 0]
     if not isinstance(s.index, pd.MultiIndex) or s.index.nlevels < 2:
@@ -43,23 +54,24 @@ def _weights(group, quantile, minimum):
             result[f"group_{i}"] = pd.Series(1.0 / len(members), index=members)
     return result
 
-def _summary(rows, rebalances):
+def _summary(rows, rebalances, periods_per_year=252.0):
     if not rows:
         return {}
     frame = pd.DataFrame(rows).set_index("date").sort_index()
     net, gross = frame.net_return.clip(lower=-.999999), frame.gross_return.clip(lower=-.999999)
     ne, ge = (1 + net).cumprod(), (1 + gross).cumprod()
     periods, std = len(frame), float(net.std(ddof=1)) if len(frame) > 1 else 0.0
-    annual = lambda e: float(e.iloc[-1] ** (252.0 / periods) - 1.0)
+    ppy = float(periods_per_year)
+    annual = lambda e: float(e.iloc[-1] ** (ppy / periods) - 1.0)
     dd = ne / ne.cummax() - 1
     active = frame.loc[frame.is_rebalance, "turnover"]
     return {
         "annualized_gross_return": annual(ge), "annualized_net_return": annual(ne),
-        "total_net_return": float(ne.iloc[-1] - 1), "annualized_volatility": std * np.sqrt(252.0),
-        "sharpe_ratio": float(net.mean() / std * np.sqrt(252.0)) if std > 0 else 0.0,
+        "total_net_return": float(ne.iloc[-1] - 1), "annualized_volatility": std * np.sqrt(ppy),
+        "sharpe_ratio": float(net.mean() / std * np.sqrt(ppy)) if std > 0 else 0.0,
         "max_drawdown": float(dd.min()), "average_daily_turnover": float(frame.turnover.mean()),
         "average_turnover_per_rebalance": float(active.mean()) if len(active) else 0.0,
-        "annualized_turnover": float(frame.turnover.mean() * 252.0),
+        "annualized_turnover": float(frame.turnover.mean() * ppy),
         "total_transaction_cost": float(frame.transaction_cost.sum()),
         "total_borrow_cost": float(frame.borrow_cost.sum()),
         "average_positions": float(frame.positions.mean()), "rebalance_count": int(rebalances),
@@ -71,7 +83,8 @@ def _summary(rows, rebalances):
     }
 
 def calculate_multi_frequency_analytics(signal, realized, frequencies=("day",), *,
-        quantile=.1, min_positions=20, transaction_cost=.0005, short_borrow_rate=0.0):
+        quantile=.1, min_positions=20, transaction_cost=.0005, short_borrow_rate=0.0,
+        periods_per_year=None):
     """Daily P&L for daily/weekly/monthly rebalancing; long-short is 50/50."""
     joined = pd.concat([_series(signal, "signal").rename("score"),
                         _series(realized, "return").rename("realized_return")], axis=1, join="inner")
@@ -84,6 +97,7 @@ def calculate_multi_frequency_analytics(signal, realized, frequencies=("day",), 
         raise ValueError(f"Unsupported evaluation frequencies: {bad}")
     dates = pd.DatetimeIndex(joined.index.get_level_values("datetime").unique()).sort_values()
     names = ["long", "short", "long_short", *[f"group_{i}" for i in range(1, 11)]]
+    ppy = float(periods_per_year) if periods_per_year else default_periods_per_year()
     output = {}
     for frequency in frequencies:
         rebalance_dates = _rebalance_dates(dates, frequency)
@@ -106,15 +120,15 @@ def calculate_multi_frequency_analytics(signal, realized, frequencies=("day",), 
                 turnover = float(weight.subtract(previous[name], fill_value=0).abs().sum()) if is_rebalance else 0.0
                 gross = float((weight * returns.reindex(weight.index).fillna(0)).sum())
                 cost = turnover * transaction_cost
-                borrow = short_borrow_rate / 252.0 * float(weight[weight < 0].abs().sum())
+                borrow = short_borrow_rate / ppy * float(weight[weight < 0].abs().sum())
                 records[name].append({"date": date, "gross_return": gross,
                     "net_return": gross - cost - borrow, "turnover": turnover,
                     "transaction_cost": cost, "borrow_cost": borrow,
                     "positions": len(weight), "is_rebalance": is_rebalance})
                 if is_rebalance:
                     previous[name] = weight.copy()
-        portfolios = {n: _summary(records[n], count) for n in ("long", "short", "long_short") if records[n]}
-        deciles = {n: _summary(records[n], count) for n in (f"group_{i}" for i in range(1, 11)) if records[n]}
+        portfolios = {n: _summary(records[n], count, ppy) for n in ("long", "short", "long_short") if records[n]}
+        deciles = {n: _summary(records[n], count, ppy) for n in (f"group_{i}" for i in range(1, 11)) if records[n]}
         dr = pd.Series({int(n.split("_")[1]): v["annualized_net_return"] for n, v in deciles.items()})
         output[frequency] = {"portfolio_analytics": portfolios, "decile_analytics": deciles,
             "decile_monotonicity": float(dr.index.to_series().corr(dr, method="spearman")) if len(dr) > 1 else 0.0,

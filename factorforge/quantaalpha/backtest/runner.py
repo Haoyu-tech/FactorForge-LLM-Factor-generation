@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 from quantaalpha.backtest.calendar_guard import clamp_backtest_end_date
 from quantaalpha.backtest.long_short_analytics import (
-    industry_rank_signal, calculate_industry_diagnostics,
+    industry_rank_signal, calculate_industry_diagnostics, default_periods_per_year,
 )
 
 
@@ -765,7 +765,11 @@ class BacktestRunner:
             **{f'group_{number}': pd.Series(dtype=float) for number in range(1, 11)},
         }
         records = {name: [] for name in previous}
-        borrow_daily = short_borrow_rate / 252.0
+        market_mode = self.config.get('data', {}).get('market_mode')
+        ppy = default_periods_per_year(
+            {'MARKET_MODE': market_mode} if market_mode else None
+        )
+        borrow_daily = short_borrow_rate / ppy
 
         for date, group in joined.groupby(level='datetime', sort=True):
             group = group.droplevel('datetime').sort_values('score')
@@ -813,10 +817,10 @@ class BacktestRunner:
             periods = len(frame)
 
             def annualized(equity: pd.Series) -> float:
-                return float(equity.iloc[-1] ** (252.0 / periods) - 1.0) if periods else 0.0
+                return float(equity.iloc[-1] ** (ppy / periods) - 1.0) if periods else 0.0
 
-            volatility = float(net.std(ddof=1) * np.sqrt(252)) if periods > 1 else 0.0
-            sharpe = float(net.mean() / net.std(ddof=1) * np.sqrt(252)) if periods > 1 and net.std(ddof=1) > 0 else 0.0
+            volatility = float(net.std(ddof=1) * np.sqrt(ppy)) if periods > 1 else 0.0
+            sharpe = float(net.mean() / net.std(ddof=1) * np.sqrt(ppy)) if periods > 1 and net.std(ddof=1) > 0 else 0.0
             drawdown = net_equity / net_equity.cummax() - 1.0
             return {
                 'annualized_gross_return': annualized(gross_equity),
@@ -826,7 +830,7 @@ class BacktestRunner:
                 'sharpe_ratio': sharpe,
                 'max_drawdown': float(drawdown.min()),
                 'average_daily_turnover': float(frame['turnover'].mean()),
-                'annualized_turnover': float(frame['turnover'].mean() * 252),
+                'annualized_turnover': float(frame['turnover'].mean() * ppy),
                 'total_transaction_cost': float(frame['transaction_cost'].sum()),
                 'total_borrow_cost': float(frame['borrow_cost'].sum()),
                 'average_positions': float(frame['positions'].mean()),
