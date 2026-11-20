@@ -821,7 +821,8 @@ class BacktestRunner:
 
             volatility = float(net.std(ddof=1) * np.sqrt(ppy)) if periods > 1 else 0.0
             sharpe = float(net.mean() / net.std(ddof=1) * np.sqrt(ppy)) if periods > 1 and net.std(ddof=1) > 0 else 0.0
-            drawdown = net_equity / net_equity.cummax() - 1.0
+            # Wealth starts at 1.0, so a first-day loss counts toward drawdown.
+            drawdown = net_equity / np.maximum(net_equity.cummax(), 1.0) - 1.0
             return {
                 'annualized_gross_return': annualized(gross_equity),
                 'annualized_net_return': annualized(net_equity),

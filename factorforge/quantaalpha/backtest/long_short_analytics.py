@@ -63,7 +63,8 @@ def _summary(rows, rebalances, periods_per_year=252.0):
     periods, std = len(frame), float(net.std(ddof=1)) if len(frame) > 1 else 0.0
     ppy = float(periods_per_year)
     annual = lambda e: float(e.iloc[-1] ** (ppy / periods) - 1.0)
-    dd = ne / ne.cummax() - 1
+    # Wealth starts at 1.0, so a loss on the first day counts toward drawdown.
+    dd = ne / np.maximum(ne.cummax(), 1.0) - 1
     active = frame.loc[frame.is_rebalance, "turnover"]
     return {
         "annualized_gross_return": annual(ge), "annualized_net_return": annual(ne),
