@@ -254,7 +254,9 @@ def build_sp500_qlib(
             daily = pd.merge_asof(
                 daily, quarterly.sort_values("available_date"),
                 left_on="date", right_on="available_date",
-                direction="backward", allow_exact_matches=True,
+                # rdq announcements are often after the close, so the numbers
+                # are first tradable on the next session, not on rdq itself.
+                direction="backward", allow_exact_matches=False,
             )
             daily["fundamental_age_days"] = (
                 daily["date"] - daily["available_date"]

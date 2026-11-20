@@ -28,6 +28,7 @@ def datatype_adapter(func):
 
 @datatype_adapter
 def DELTA(df:pd.DataFrame, p:int=1):
+    assert p >= 0, ValueError("DELTA period must be >= 0 (look-ahead bias)")
     return df.groupby('instrument').transform(lambda x: x.diff(periods=p))
 
 @datatype_adapter
@@ -133,7 +134,8 @@ def PERCENTILE(df: pd.DataFrame, q: float, p: int = None):
     if p is not None:
         return df.groupby('instrument').transform(lambda x: x.rolling(p, min_periods=1).quantile(q))
     else:
-        return df.groupby('instrument').transform(lambda x: x.quantile(q))
+        # Expanding, not full-sample: a whole-history quantile reads future data.
+        return df.groupby('instrument').transform(lambda x: x.expanding(min_periods=1).quantile(q))
 
 
 
@@ -695,6 +697,7 @@ def TS_QUANTILE(df: pd.DataFrame, p: int = 5, q: float = 0.5):
 @datatype_adapter
 def TS_PCTCHANGE(df: pd.DataFrame, p: int = 1):
     """Percentage change over p periods (default 1)."""
+    assert p >= 0, ValueError("TS_PCTCHANGE period must be >= 0 (look-ahead bias)")
     return df.groupby('instrument').transform(lambda x: x.pct_change(periods=p, fill_method=None).fillna(0))
 
 
