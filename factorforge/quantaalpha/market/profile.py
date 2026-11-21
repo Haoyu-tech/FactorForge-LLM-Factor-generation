@@ -131,3 +131,56 @@ def apply_market_eligibility(signal, frame, environment: dict[str, str] | None =
         if str(env.get(key, "false")).lower() in {"1", "true", "yes", "on"}:
             result = result.where(~np.asarray(board_mask))
     return result
+
+
+def describe_evaluation_protocol(environment: dict[str, str] | None = None) -> str:
+    """State, in plain words, how the mining loop scores a candidate factor.
+
+    The text is shown to the LLM. It mirrors the settings read by
+    ``QlibFactorRunner.develop`` (single-factor mode) so that hypotheses are
+    written for the test they will actually face. Keep the two in step.
+    """
+    env = os.environ if environment is None else environment
+    profile = get_market_profile(env)
+
+    def number(name: str, default: float) -> float:
+        try:
+            return float(str(env.get(name, default)).strip())
+        except (TypeError, ValueError):
+            return float(default)
+
+    split = str(env.get("MINING_EVALUATION_SPLIT", "valid")).strip().lower()
+    split = "test" if split == "test" else "validation"
+    labels = {"day": "daily", "week": "weekly", "month": "monthly"}
+    frequencies = [
+        labels[item.strip().lower()]
+        for item in str(env.get("MINING_EVALUATION_FREQUENCIES", "day")).split(",")
+        if item.strip().lower() in labels
+    ] or ["daily"]
+    quantile = number("LONG_SHORT_QUANTILE", 0.1)
+    cost_bps = number("LONG_SHORT_TRANSACTION_COST", 0.0005) * 1e4
+    if profile.mode == "crypto":
+        grouping = "ranked across the whole market on each date"
+    else:
+        grouping = (
+            f"ranked within each {profile.primary_classification} industry group on each date, "
+            "so a pure industry tilt earns nothing"
+        )
+    primary = (
+        "the long-only top group" if profile.mode == "cn"
+        else "the dollar-neutral top-minus-bottom portfolio"
+    )
+    return (
+        f"Every candidate is scored on the {split} period only. "
+        "The factor value known at the close of day t is compared with the close-to-close return "
+        "from day t+1 to day t+2: one trading day is skipped, so an effect that is gone by the "
+        "next close earns nothing. "
+        f"Before scoring, the factor is {grouping}. "
+        "Higher factor values must mean higher expected returns. "
+        f"Portfolios hold the top and bottom {quantile:.0%} of names with equal weights, "
+        f"rebalanced {' and '.join(frequencies)}; the primary result is {primary}. "
+        f"Each rebalance is charged {cost_bps:g} bps per unit of turnover, so a signal whose "
+        "top and bottom groups change every day can lose its whole gross return to costs: "
+        "state the horizon over which the signal should persist and prefer signals whose "
+        "ranks are stable over that horizon."
+    )

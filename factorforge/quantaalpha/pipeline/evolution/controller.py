@@ -765,10 +765,14 @@ class EvolutionController:
         if backtest_result is not None:
             backtest_metrics = self._extract_metrics(backtest_result)
         
-        # Extract feedback info
-        feedback_text = str(feedback) if feedback else ""
+        # Extract feedback info. HypothesisFeedback.__bool__ returns the
+        # "replace best result" decision, so a truthiness test silently drops
+        # the feedback of every rejected trajectory -- exactly the feedback
+        # mutation and crossover need most. Test for presence instead.
+        has_feedback = feedback is not None
+        feedback_text = str(feedback) if has_feedback else ""
         feedback_details = {}
-        if feedback:
+        if has_feedback:
             for attr in ["observations", "hypothesis_evaluation", "new_hypothesis", 
                         "reason", "decision"]:
                 if hasattr(feedback, attr):

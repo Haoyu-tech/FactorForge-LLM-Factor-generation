@@ -159,3 +159,11 @@ class QlibAlphaAgentScenario(QlibFactorScenario):
             )
             self._experiment_setting = experiment_context
             self._background += "\nExperiment setting: " + experiment_context
+
+        # Tell the LLM how candidates are really scored (label timing, industry
+        # ranking, portfolio construction and costs). Without this the
+        # hypotheses are written for "next-day returns", which is not the test.
+        from quantaalpha.market.profile import describe_evaluation_protocol
+        protocol = describe_evaluation_protocol()
+        self._experiment_setting = f"{self._experiment_setting} {protocol}"
+        self._background += "\nEvaluation protocol: " + protocol
