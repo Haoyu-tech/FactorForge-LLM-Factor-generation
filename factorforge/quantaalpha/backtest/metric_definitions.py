@@ -17,17 +17,17 @@ LABEL_EXPRESSION = "Ref($close, -2)/Ref($close, -1) - 1"
 METRIC_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     "IC": {
         "label": "IC",
-        "formula": "mean_t( corr_pearson( score_{i,t}, r_{i,t+1} ) )",
+        "formula": "mean_t( corr_pearson( score_{i,t}, r_{i,t+1->t+2} ) )",
         "description": (
             "For every test day t, the cross-sectional Pearson correlation between the "
-            f"signal and the next-day return {LABEL_EXPRESSION} across stocks i; "
+            f"signal and the return from the close of t+1 to the close of t+2, {LABEL_EXPRESSION}, across stocks i; "
             "then the mean over days."
         ),
         "function": lsa.calculate_ic_metrics,
     },
     "Rank IC": {
         "label": "Rank IC",
-        "formula": "mean_t( corr_spearman( score_{i,t}, r_{i,t+1} ) )",
+        "formula": "mean_t( corr_spearman( score_{i,t}, r_{i,t+1->t+2} ) )",
         "description": "Same as IC with Spearman rank correlation instead of Pearson.",
         "function": lsa.calculate_ic_metrics,
     },
@@ -42,8 +42,9 @@ METRIC_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "formula": "equity_T ^ (252 / T) - 1,   equity_t = prod_{s<=t}(1 + net_s)",
         "description": (
             "Annualised net return of the long-short portfolio: each rebalance goes long the top "
-            "decile of the signal and short the bottom decile, equal-weighted, 50% / 50% exposure, "
-            "after transaction costs on turnover."
+            "decile of the signal and short the bottom decile, equal-weighted, 50% / 50% exposure. "
+            "Names are chosen from the signal alone; weights drift with returns between rebalances "
+            "and transaction costs are charged on turnover from the drifted weights."
         ),
         "function": lsa.calculate_multi_frequency_analytics,
     },

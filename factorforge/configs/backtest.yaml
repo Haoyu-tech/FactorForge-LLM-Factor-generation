@@ -21,8 +21,10 @@ data:
   start_time: '1925-12-31'
   end_time: '2025-12-31'
 dataset:
-  # Next-session total return.  ret_total includes CRSP delisting returns.
-  label: Ref($ret_total, -1)
+  # Total return from the close of t+1 to the close of t+2 (ret_total includes
+  # CRSP delisting returns). A signal formed at the close of t is traded at the
+  # next close, the same one-day skip as the mining, China and crypto labels.
+  label: Ref($ret_total, -2)
   learn_processors:
   - class: Fillna
     kwargs:

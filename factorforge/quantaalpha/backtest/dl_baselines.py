@@ -117,8 +117,10 @@ def realized_returns(market: str, split: Dict[str, List[str]]) -> pd.Series:
     """Raw next-day return over the test window, the same label mined factors are scored on."""
     from qlib.data import D
 
-    frame = D.features(D.instruments(market), [LABEL_EXPRESSION],
-                       start_time=split["test"][0], end_time=split["test"][1], freq="day")
+    from quantaalpha.market.profile import load_held_returns
+
+    # Held names keep earning returns after they leave the index.
+    frame = load_held_returns(D, market, LABEL_EXPRESSION, split["test"][0], split["test"][1])
     series = frame.iloc[:, 0]
     series.index = series.index.set_names(["instrument", "datetime"])
     return series
@@ -220,6 +222,9 @@ def main(argv: List[str] | None = None) -> int:
     from qlib.data.dataset import TSDatasetH
 
     qlib.init(provider_uri=provider, region=REG_US)
+    from qlib.data import D as _D
+    from quantaalpha.backtest.calendar_guard import enforce_valid_test_gap
+    enforce_valid_test_gap(split, _D.calendar(freq="day"))
     print(f"[1/3] Building Alpha158 features for {market} from {provider}", flush=True)
     handler = build_handler(market, split)
     dataset = TSDatasetH(handler=handler, segments={k: tuple(v) for k, v in split.items()}, step_len=STEP_LEN)

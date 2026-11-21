@@ -2311,7 +2311,8 @@ async def _run_backtest(task_id: str, req: BacktestStartRequest, config_path: st
         else:
             provider = dotenv.get("WRDS_QLIB_DATA_DIR") if source == "wrds" else dotenv.get("QLIB_DATA_DIR")
             effective_config.setdefault("data", {}).update({"region": "us", "market": "sp500"})
-            effective_config.setdefault("dataset", {})["label"] = "Ref($ret_total, -1)"
+            # Skip one session (trade at the close of t+1), like CN/crypto.
+            effective_config.setdefault("dataset", {})["label"] = "Ref($ret_total, -2)"
         if provider:
             effective_config.setdefault("data", {})["provider_uri"] = provider
             # runner.py and custom_factor_calculator.py prefer QLIB_DATA_DIR /

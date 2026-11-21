@@ -15,6 +15,7 @@ from quantaalpha.backtest.long_short_analytics import (
     calculate_industry_aware_analytics,
 )
 from quantaalpha.backtest.asset_pricing import regress_asset_pricing, flatten_asset_pricing
+from quantaalpha.backtest.calendar_guard import mining_evaluation_split
 
 pandarallel.initialize(verbose=1)
 
@@ -33,11 +34,9 @@ def _mining_evaluation_window():
     Validation is the safe default. Test is reserved for a frozen final
     evaluation and must not be used by the evolutionary loop.
     """
-    split = os.environ.get("MINING_EVALUATION_SPLIT", "valid").strip().lower()
-    if split not in {"valid", "test"}:
-        split = "valid"
-    prefix = "VALID" if split == "valid" else "TEST"
-    return split, os.environ.get(f"{prefix}_START_DATE"), os.environ.get(f"{prefix}_END_DATE")
+    split = mining_evaluation_split()
+    return split, os.environ.get("VALID_START_DATE"), os.environ.get("VALID_END_DATE")
+
 
 # class QlibFactorExpWorkspace:
 
@@ -222,6 +221,7 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
             from qlib.data import D
             from quantaalpha.market.profile import (
                 apply_market_eligibility, eligibility_fields, get_market_profile, qlib_region,
+                load_held_returns,
             )
 
             profile = get_market_profile()
@@ -230,12 +230,9 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
             instruments = D.instruments(profile.instrument)
             label_expression = "Ref($close, -2) / Ref($close, -1) - 1"
             evaluation_split, evaluation_start, evaluation_end = _mining_evaluation_window()
-            realized_frame = D.features(
-                instruments,
-                [label_expression],
-                start_time=evaluation_start,
-                end_time=evaluation_end,
-                freq="day",
+            # Held names keep earning returns after leaving the universe.
+            realized_frame = load_held_returns(
+                D, profile.instrument, label_expression, evaluation_start, evaluation_end,
             )
             if realized_frame.empty:
                 raise FactorEmptyError(f"No {profile.name} {evaluation_split}-period returns available for single-factor evaluation")
@@ -367,9 +364,18 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
                 from qlib.data import D
                 from quantaalpha.market.profile import (
                     apply_market_eligibility, eligibility_fields, get_market_profile,
+                    load_held_returns,
                 )
                 profile = get_market_profile()
                 instruments = D.instruments(profile.instrument)
+                # label.pkl stops at each name's universe exit; held names
+                # keep earning returns until the next rebalance.
+                held = load_held_returns(
+                    D, profile.instrument, "Ref($close, -2) / Ref($close, -1) - 1",
+                    evaluation_start, evaluation_end,
+                )
+                if not held.empty:
+                    realized = held.iloc[:, 0].rename("label")
                 market_fields = profile.qlib_classification_fields + eligibility_fields(profile)
                 industry_frame = D.features(
                     instruments, market_fields, start_time=evaluation_start,

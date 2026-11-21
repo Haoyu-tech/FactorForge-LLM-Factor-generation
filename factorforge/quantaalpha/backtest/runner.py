@@ -80,6 +80,20 @@ class BacktestRunner:
         self._qlib_initialized = True
         logger.info(f"Qlib initialized: {provider_uri} (region={region})")
 
+    def _enforce_valid_test_gap(self) -> None:
+        """Leave two full sessions between the last validation label and the test start."""
+        from qlib.data import D
+        from quantaalpha.backtest.calendar_guard import enforce_valid_test_gap, VALID_TEST_GAP_SESSIONS
+
+        segments = self.config.get('dataset', {}).get('segments', {})
+        original = list(segments.get('valid') or [])
+        moved = enforce_valid_test_gap(segments, D.calendar(freq='day'))
+        if moved:
+            logger.info(
+                f"Validation end moved {original[1]} -> {moved} to leave "
+                f"{VALID_TEST_GAP_SESSIONS} sessions before the test start {segments['test'][0]}"
+            )
+
     def run(self,
             factor_source: Optional[str] = None,
             factor_json: Optional[List[str]] = None,
@@ -97,6 +111,7 @@ class BacktestRunner:
         """Run full backtest; returns metrics dict."""
         start_time_total = time.time()
         self._init_qlib()
+        self._enforce_valid_test_gap()
         if factor_source:
             self.config['factor_source']['type'] = factor_source
         if factor_json:
@@ -721,11 +736,16 @@ class BacktestRunner:
     def _calculate_long_short_analytics(self, pred: pd.Series) -> Dict[str, Dict]:
         """Calculate equal-weight long, short, long-short and score deciles.
 
-        Turnover is gross traded notional: sum(abs(w_t - w_(t-1))). Costs are
-        charged on that notional. The long-short leg uses 50% long and 50%
-        short exposure, for 100% total gross exposure.
+        Uses the shared daily engine in ``long_short_analytics``: names are
+        chosen from the signal alone (never from whether their next return
+        exists), held names earn their realized return even after leaving the
+        index or losing their signal, weights drift between rebalances, and
+        turnover sum(|w_target - w_drifted|) is charged at
+        ``transaction_cost``. The long-short leg is 50% long / 50% short.
         """
         from qlib.data import D
+        from quantaalpha.backtest.long_short_analytics import calculate_multi_frequency_analytics
+        from quantaalpha.market.profile import load_held_returns
 
         ls_config = self.config.get('backtest', {}).get('long_short', {})
         quantile = float(ls_config.get('quantile', 0.1))
@@ -736,116 +756,29 @@ class BacktestRunner:
             raise ValueError(f"long_short.quantile must be in (0, 0.5], got {quantile}")
 
         bt_config = self.config['backtest']['backtest']
-        instruments = D.instruments(self.config['data']['market'])
-        label_expr = self.config['dataset']['label']
-        realized = D.features(
-            instruments,
-            [label_expr],
-            start_time=bt_config['start_time'],
-            end_time=bt_config['end_time'],
-            freq='day',
-        )
-        realized = self._normalize_signal_index(realized, 'realized return').iloc[:, 0]
-        signal = pred if isinstance(pred, pd.Series) else pred.iloc[:, 0]
-        joined = pd.concat(
-            [signal.rename('score'), realized.rename('realized_return')], axis=1, join='inner'
-        ).replace([np.inf, -np.inf], np.nan).dropna()
-
         start = pd.Timestamp(bt_config['start_time'])
         end = pd.Timestamp(bt_config['end_time'])
-        dates = joined.index.get_level_values('datetime')
-        joined = joined[(dates >= start) & (dates <= end)]
-        if joined.empty:
+        realized = load_held_returns(
+            D, self.config['data']['market'], self.config['dataset']['label'],
+            bt_config['start_time'], bt_config['end_time'],
+        )
+        if realized.empty:
             raise ValueError('No prediction/return overlap for long-short analytics')
+        realized = self._normalize_signal_index(realized, 'realized return').iloc[:, 0]
+        signal = pred if isinstance(pred, pd.Series) else pred.iloc[:, 0]
+        signal_dates = signal.index.get_level_values('datetime')
+        signal = signal[(signal_dates >= start) & (signal_dates <= end)]
 
-        previous = {
-            'long': pd.Series(dtype=float),
-            'short': pd.Series(dtype=float),
-            'long_short': pd.Series(dtype=float),
-            **{f'group_{number}': pd.Series(dtype=float) for number in range(1, 11)},
-        }
-        records = {name: [] for name in previous}
         market_mode = self.config.get('data', {}).get('market_mode')
         ppy = default_periods_per_year(
             {'MARKET_MODE': market_mode} if market_mode else None
         )
-        borrow_daily = short_borrow_rate / ppy
-
-        for date, group in joined.groupby(level='datetime', sort=True):
-            group = group.droplevel('datetime').sort_values('score')
-            count = min(max(min_positions, int(np.ceil(len(group) * quantile))), len(group) // 2)
-            if count < 1:
-                continue
-            bottom = group.iloc[:count]
-            top = group.iloc[-count:]
-            long_weights = pd.Series(1.0 / count, index=top.index)
-            short_weights = pd.Series(-1.0 / count, index=bottom.index)
-            weights = {
-                'long': long_weights,
-                'short': short_weights,
-                'long_short': pd.concat([long_weights * 0.5, short_weights * 0.5]),
-            }
-            for number, members in enumerate(np.array_split(group.index.to_numpy(), 10), start=1):
-                if len(members) > 0:
-                    weights[f'group_{number}'] = pd.Series(1.0 / len(members), index=members)
-            returns = group['realized_return']
-
-            for name, current in weights.items():
-                delta = current.subtract(previous[name], fill_value=0.0)
-                turnover = float(delta.abs().sum())
-                cost = turnover * transaction_cost
-                gross_return = float((current * returns.reindex(current.index)).sum())
-                borrow_cost = borrow_daily * float(current[current < 0].abs().sum())
-                net_return = gross_return - cost - borrow_cost
-                records[name].append({
-                    'date': pd.Timestamp(date),
-                    'gross_return': gross_return,
-                    'net_return': net_return,
-                    'turnover': turnover,
-                    'transaction_cost': cost,
-                    'borrow_cost': borrow_cost,
-                    'positions': int(len(current)),
-                })
-                previous[name] = current
-
-        def summarize(rows: List[Dict]) -> Dict:
-            frame = pd.DataFrame(rows).set_index('date').sort_index()
-            net = frame['net_return'].clip(lower=-0.999999)
-            gross = frame['gross_return'].clip(lower=-0.999999)
-            net_equity = (1.0 + net).cumprod()
-            gross_equity = (1.0 + gross).cumprod()
-            periods = len(frame)
-
-            def annualized(equity: pd.Series) -> float:
-                return float(equity.iloc[-1] ** (ppy / periods) - 1.0) if periods else 0.0
-
-            volatility = float(net.std(ddof=1) * np.sqrt(ppy)) if periods > 1 else 0.0
-            sharpe = float(net.mean() / net.std(ddof=1) * np.sqrt(ppy)) if periods > 1 and net.std(ddof=1) > 0 else 0.0
-            # Wealth starts at 1.0, so a first-day loss counts toward drawdown.
-            drawdown = net_equity / np.maximum(net_equity.cummax(), 1.0) - 1.0
-            return {
-                'annualized_gross_return': annualized(gross_equity),
-                'annualized_net_return': annualized(net_equity),
-                'total_net_return': float(net_equity.iloc[-1] - 1.0),
-                'annualized_volatility': volatility,
-                'sharpe_ratio': sharpe,
-                'max_drawdown': float(drawdown.min()),
-                'average_daily_turnover': float(frame['turnover'].mean()),
-                'annualized_turnover': float(frame['turnover'].mean() * ppy),
-                'total_transaction_cost': float(frame['transaction_cost'].sum()),
-                'total_borrow_cost': float(frame['borrow_cost'].sum()),
-                'average_positions': float(frame['positions'].mean()),
-                'daily_net_returns': [
-                    {'date': idx.strftime('%Y-%m-%d'), 'value': float(value)}
-                    for idx, value in net.items()
-                ],
-                'curve': [
-                    {'date': idx.strftime('%Y-%m-%d'), 'value': float(value - 1.0)}
-                    for idx, value in net_equity.items()
-                ],
-            }
-
-        return {name: summarize(rows) for name, rows in records.items() if rows}
+        daily = calculate_multi_frequency_analytics(
+            signal, realized, ('day',), quantile=quantile, min_positions=min_positions,
+            transaction_cost=transaction_cost, short_borrow_rate=short_borrow_rate,
+            periods_per_year=ppy,
+        )['day']
+        return {**daily['portfolio_analytics'], **daily['decile_analytics']}
 
     def _train_and_backtest(
         self,

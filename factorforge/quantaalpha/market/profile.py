@@ -60,6 +60,21 @@ def qlib_region(profile: MarketProfile):
     return REG_CN if profile.region == "cn" else REG_US
 
 
+def load_held_returns(D, market: str, expression: str, start_time, end_time) -> pd.DataFrame:
+    """Load ``expression`` for every name that was ever in ``market``, on all dates.
+
+    A universe's instrument file stops a name's rows at its exit date. A
+    portfolio still holds that name until the next rebalance, so realized
+    returns must not be clipped to index membership.
+    """
+    members = D.list_instruments(D.instruments(market), start_time=start_time,
+                                 end_time=end_time, as_list=True)
+    if not members:
+        return pd.DataFrame()
+    return D.features(sorted(members), [expression], start_time=start_time,
+                      end_time=end_time, freq="day")
+
+
 def eligibility_fields(profile: MarketProfile) -> list[str]:
     if profile.mode == "cn":
         return ["$is_st", "$listing_age_days"]
@@ -99,9 +114,11 @@ def apply_market_eligibility(signal, frame, environment: dict[str, str] | None =
         if profile.mode == "crypto" and "listing_age_days" in frame:
             minimum = float(env.get("CRYPTO_MIN_LISTING_DAYS", "90"))
             result = result.where(frame["listing_age_days"].reindex(result.index) >= minimum)
-    if str(env.get("CN_EXCLUDE_ST", "true")).lower() in {"1", "true", "yes", "on"} and "is_st" in frame:
+    # The A-share ST and new-stock rules must not also apply to crypto
+    # contracts; crypto frames carry the same listing_age_days field.
+    if profile.mode == "cn" and str(env.get("CN_EXCLUDE_ST", "true")).lower() in {"1", "true", "yes", "on"} and "is_st" in frame:
         result = result.where(frame["is_st"].reindex(result.index).fillna(0) < 0.5)
-    if str(env.get("CN_EXCLUDE_NEW_STOCKS", "true")).lower() in {"1", "true", "yes", "on"} and "listing_age_days" in frame:
+    if profile.mode == "cn" and str(env.get("CN_EXCLUDE_NEW_STOCKS", "true")).lower() in {"1", "true", "yes", "on"} and "listing_age_days" in frame:
         minimum = float(env.get("CN_NEW_STOCK_MIN_TRADING_DAYS", "375"))
         result = result.where(frame["listing_age_days"].reindex(result.index) >= minimum)
     instruments = result.index.get_level_values("instrument").astype(str).str.upper()
