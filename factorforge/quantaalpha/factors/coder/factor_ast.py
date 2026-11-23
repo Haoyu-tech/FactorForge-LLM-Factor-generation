@@ -275,7 +275,7 @@ class SubtreeMatch:
     size: int
     
     def __str__(self):
-        return f"Match(size={self.size}):\n  Tree1: {str(root1)}\n  Tree2: {str(root2)}"
+        return f"Match(size={self.size}):\n  Tree1: {str(self.root1)}\n  Tree2: {str(self.root2)}"
 
 def find_largest_common_subtree(root1: Node, root2: Node) -> Opt[SubtreeMatch]:
     """Find largest common subtree between two trees."""
