@@ -2091,13 +2091,16 @@ async def get_backtest_config():
 
     def market_date(key: str) -> Optional[str]:
         return dotenv.get(f"{date_prefix}_{key}") or dotenv.get(key)
-    wrds_root = Path(dotenv.get("WRDS_ROOT", "/mnt/d/桌面文件/US stock research/wrds"))
-    kelly_panel = wrds_root / "_quantaalpha_cache" / "kelly_153_sp500.parquet"
-    kelly_report = PROJECT_ROOT / "data" / "kelly" / "jkp_sp500_missingness_1987.json"
+    from quantaalpha.data.kelly_adapter import resolve_kelly_paths
+    kelly_paths = resolve_kelly_paths(dotenv, PROJECT_ROOT)
+    kelly_panel = kelly_paths["panel"]
+    kelly_report = kelly_paths["report_json"]
     kelly_status: Dict[str, Any] = {
         "ready": kelly_panel.exists() and kelly_report.exists(),
         "panelPath": str(kelly_panel),
         "reportPath": str(kelly_report),
+        "sourcePath": str(kelly_paths["source"]),
+        "sourceExists": kelly_paths["source"].exists(),
         "factorCount": 153,
         "thresholdCounts": {},
     }
@@ -2421,11 +2424,12 @@ async def _run_backtest(task_id: str, req: BacktestStartRequest, config_path: st
         task["config"]["retrainMonths"] = retrain_months
         task["config"]["minTrainYears"] = min_train_years
         if req.factorSource == "kelly_jkp":
-            wrds_root = Path(dotenv.get("WRDS_ROOT", "/mnt/d/桌面文件/US stock research/wrds"))
-            panel_path = wrds_root / "_quantaalpha_cache" / "kelly_153_sp500.parquet"
+            from quantaalpha.data.kelly_adapter import resolve_kelly_paths
+            panel_path = resolve_kelly_paths(dotenv, PROJECT_ROOT)["panel"]
             if not panel_path.exists():
                 raise FileNotFoundError(
-                    f"Kelly S&P 500 panel not found: {panel_path}. Build the Kelly cache first."
+                    f"Kelly S&P 500 panel not found: {panel_path}. Build it with "
+                    "`python -m quantaalpha.data.kelly_adapter` from the factorforge directory."
                 )
             output_dir = Path(
                 effective_config.get("experiment", {}).get(
