@@ -8,6 +8,7 @@ import { Factor, FactorQuality } from '@/types';
 import { formatNumber, getQualityBadgeClass } from '@/utils';
 import { OPEN_LIBRARY_EVENT, type OpenLibraryDetail } from '@/utils/libraryNavigation';
 import { getFactors, deleteFactors, getFactorCorrelation, FactorCorrelationResponse } from '@/services/api';
+import { FactorDetail } from '@/components/FactorDetail';
 import { factorPageUrl, type MarketMode } from '@/utils/factorPage';
 import {
   Database,
@@ -40,6 +41,8 @@ export const FactorLibraryPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [qualityFilter, setQualityFilter] = useState<FactorQuality | 'all'>('all');
   const [sortBy, setSortBy] = useState<'score_desc' | 'score_asc' | 'newest' | 'rank_ic' | 'ic'>('score_desc');
+  // Factor shown in the floating detail window; its own page opens from there.
+  const [openFactor, setOpenFactor] = useState<Factor | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [libraries, setLibraries] = useState<string[]>([]);
@@ -187,10 +190,12 @@ export const FactorLibraryPage: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  // Each factor has its own page (factor.html); open it beside the library.
+  // Each factor also has its own page (factor.html), opened from the detail window.
+  const factorLibrary = (factor: Factor) =>
+    factor.sourceLibrary || (selectedLibrary && selectedLibrary !== '__all__' ? selectedLibrary : undefined);
   const factorHref = (factor: Factor) => factorPageUrl({
     id: factor.factorId,
-    library: factor.sourceLibrary || (selectedLibrary && selectedLibrary !== '__all__' ? selectedLibrary : undefined),
+    library: factorLibrary(factor),
     marketMode: (factor as Factor & { marketMode?: MarketMode }).marketMode || marketMode,
   });
 
@@ -217,6 +222,7 @@ export const FactorLibraryPage: React.FC = () => {
       await deleteFactors(factorIds, selectedLibrary || latestSource || undefined, { marketMode, market });
       setSelectedFactorIds(new Set());
       setCorrelationData(null);
+      if (openFactor && factorIds.includes(openFactor.factorId)) setOpenFactor(null);
       await loadFactors();
     } catch (err: any) {
       setError(err?.message || '删除因子失败');
@@ -657,7 +663,7 @@ export const FactorLibraryPage: React.FC = () => {
           <Card
             key={factor.factorId}
             className="glass card-hover cursor-pointer"
-            onClick={() => window.open(factorHref(factor), '_blank', 'noopener')}
+            onClick={() => setOpenFactor(factor)}
           >
             <CardHeader className="pb-3">
               <div className="flex items-start justify-between gap-3">
@@ -672,16 +678,7 @@ export const FactorLibraryPage: React.FC = () => {
                 <div className="flex-1">
                   <CardTitle className="text-base flex items-center gap-2">
                     <span className="text-xs text-muted-foreground font-mono">#{index + 1}</span>
-                    <a
-                      href={factorHref(factor)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(event) => event.stopPropagation()}
-                      className="inline-flex items-center gap-1 hover:text-primary hover:underline"
-                    >
-                      {factor.factorName}
-                      <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    </a>
+                    {factor.factorName}
                   </CardTitle>
                   <div className="flex items-center gap-2 mt-2">
                     <Badge className={getQualityBadgeClass(factor.quality)}>
@@ -766,6 +763,46 @@ export const FactorLibraryPage: React.FC = () => {
         </Card>
       )}
 
+      {/* Factor detail window; "Open as page" shows the same view at factor.html */}
+      {openFactor && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-6"
+          onClick={() => setOpenFactor(null)}
+        >
+          <Card
+            className="glass-strong max-w-6xl w-full max-h-[86vh] overflow-y-auto animate-scale-in"
+            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+          >
+            <FactorDetail
+              factorId={openFactor.factorId}
+              library={factorLibrary(openFactor)}
+              initialFactor={openFactor}
+              marketMode={marketMode}
+              actions={(
+                <>
+                  <a
+                    href={factorHref(openFactor)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-10 items-center rounded-md border border-input px-4 text-sm font-medium hover:bg-accent"
+                  >
+                    <ExternalLink className="h-4 w-4 mr-2" />{language === 'zh' ? '在新页面打开' : 'Open as page'}
+                  </a>
+                  <Button
+                    variant="outline"
+                    onClick={() => handleDeleteFactors([openFactor.factorId])}
+                    disabled={isDeleting}
+                    className="text-destructive border-destructive/40"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />{language === 'zh' ? '删除' : 'Delete'}
+                  </Button>
+                  <Button variant="ghost" onClick={() => setOpenFactor(null)} aria-label={language === 'zh' ? '关闭' : 'Close'}>✕</Button>
+                </>
+              )}
+            />
+          </Card>
+        </div>
+      )}
     </div>
   );
 };

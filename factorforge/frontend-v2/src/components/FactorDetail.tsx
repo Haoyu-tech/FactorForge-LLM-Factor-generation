@@ -13,8 +13,12 @@ interface FactorDetailProps {
   factorId: string;
   /** Library file holding the factor; undefined searches every library. */
   library?: string;
+  /** List payload to show at once while the full detail loads. */
+  initialFactor?: any;
   /** Market of the surrounding view, for factors that do not record their own. */
   marketMode: MarketMode;
+  /** Buttons shown at the right of the title row. */
+  actions?: React.ReactNode;
   /** Called with the full detail once it has loaded. */
   onLoaded?: (factor: any) => void;
 }
@@ -30,16 +34,19 @@ function firstCurveFrequency(evaluation: any): string {
 /**
  * Everything known about one factor: description, LLM explanation, the round
  * feedback that produced it, quality score, and train/valid/test statistics
- * with decile curves. Rendered by factor.html, which every factor link opens.
+ * with decile curves. Shown by the Factor Library's floating window and by
+ * factor.html, the factor's own page.
  */
 export const FactorDetail: React.FC<FactorDetailProps> = ({
   factorId,
   library,
+  initialFactor,
   marketMode,
+  actions,
   onLoaded,
 }) => {
   const { language } = useLanguage();
-  const [factor, setFactor] = useState<any | null>(null);
+  const [factor, setFactor] = useState<any | null>(initialFactor ?? null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [curveFrequency, setCurveFrequency] = useState('');
   const [showBenchmark, setShowBenchmark] = useState(true);
@@ -48,6 +55,8 @@ export const FactorDetail: React.FC<FactorDetailProps> = ({
   const [splitRefreshRequested, setSplitRefreshRequested] = useState(false);
   const [splitError, setSplitError] = useState<string | null>(null);
   // Read inside the load effect without making it re-run on every parent render.
+  const initialRef = useRef(initialFactor);
+  initialRef.current = initialFactor;
   const onLoadedRef = useRef(onLoaded);
   onLoadedRef.current = onLoaded;
 
@@ -92,12 +101,15 @@ export const FactorDetail: React.FC<FactorDetailProps> = ({
 
   useEffect(() => {
     let cancelled = false;
-    setFactor(null);
+    // Show the list payload at once; the full detail enriches it afterwards.
+    const seed = initialRef.current;
+    const listFactor = seed && (seed.factorId || seed.factor_id) === factorId ? seed : null;
+    setFactor(listFactor);
     setLoadError(null);
     setSplitError(null);
     setEvaluationSplit('test');
     setShowBenchmark(true);
-    setCurveFrequency('');
+    setCurveFrequency(firstCurveFrequency(splitResultsOf(listFactor).test));
     (async () => {
       try {
         const resp = await getFactorDetail(factorId, library);
@@ -110,8 +122,9 @@ export const FactorDetail: React.FC<FactorDetailProps> = ({
         const detail = {
           factorId,
           sourceLibrary: library,
+          ...(listFactor || {}),
           ...payload,
-          splitResults: splitResultsOf(payload),
+          splitResults: { ...splitResultsOf(listFactor), ...splitResultsOf(payload) },
         };
         setFactor(detail);
         onLoadedRef.current?.(detail);
@@ -200,6 +213,7 @@ export const FactorDetail: React.FC<FactorDetailProps> = ({
               </Badge>
             </div>
           </div>
+          {actions && <div className="flex items-center gap-2">{actions}</div>}
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
