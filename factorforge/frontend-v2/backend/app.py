@@ -16,6 +16,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 from urllib.parse import urlparse
 import uuid
 from datetime import datetime
@@ -239,6 +240,15 @@ def _empty_usage() -> Dict[str, Any]:
     }
 
 
+def _empty_mining_metrics() -> Dict[str, Any]:
+    return {
+        "ic": 0, "icir": 0, "rankIc": 0, "rankIcir": 0,
+        "annualReturn": 0, "sharpeRatio": 0, "maxDrawdown": 0,
+        "totalFactors": 0, "highQualityFactors": 0,
+        "mediumQualityFactors": 0, "lowQualityFactors": 0,
+    }
+
+
 def _coerce_cost(value: Any) -> Optional[float]:
     """A reported cost, or None when the provider reported none.
 
@@ -346,6 +356,57 @@ def _mark_task_finished(task: Dict[str, Any]) -> None:
         task["durationSeconds"] = round((finished - started).total_seconds(), 1)
     except (TypeError, ValueError):
         task["durationSeconds"] = None
+    _save_run_record(task)
+
+
+# Last time each task's run.json was written, for throttling usage updates.
+_run_record_saved_at: Dict[str, float] = {}
+_RUN_RECORD_MIN_INTERVAL_S = 20.0
+
+
+def _save_run_record(task: Dict[str, Any], *, throttle: bool = False) -> None:
+    """Write log/<experimentId>/run.json from the in-memory task.
+
+    The task list lives only in memory, so this file is what keeps a run's
+    prompt, LLM channel, token use, outcome and timing after a restart. The
+    launch request carries no secrets (keys come from .env), so its settings
+    are saved as they are.
+    """
+    experiment_id = task.get("experimentId")
+    if not experiment_id or task.get("type") == "backtest":
+        return
+    now = time.monotonic()
+    if throttle and now - _run_record_saved_at.get(task["taskId"], 0.0) < _RUN_RECORD_MIN_INTERVAL_S:
+        return
+    from quantaalpha.utils.run_record import write_run_record
+
+    config = dict(task.get("config") or {})
+    progress = task.get("progress") or {}
+    record = {
+        "source": "backend",
+        "experimentId": experiment_id,
+        "taskId": task.get("taskId"),
+        "status": task.get("status"),
+        "statusMessage": progress.get("message"),
+        "direction": config.pop("direction", None),
+        "llm": task.get("llm"),
+        "usage": task.get("usage"),
+        "startedAt": task.get("createdAt"),
+        "completedAt": task.get("completedAt"),
+        "completedAtEstimated": False,
+        "durationSeconds": task.get("durationSeconds"),
+        "progress": {
+            "currentRound": progress.get("currentRound"),
+            "totalRounds": progress.get("totalRounds"),
+        },
+        "settings": config,
+        "updatedAt": _now(),
+    }
+    try:
+        write_run_record(PROJECT_ROOT / "log" / experiment_id, record)
+        _run_record_saved_at[task["taskId"]] = now
+    except OSError as error:
+        print(f"Could not save run record for {experiment_id}: {error}", flush=True)
 
 
 def _total_memory_gib() -> float:
@@ -606,6 +667,15 @@ def _prune_stale_factor_split_caches() -> Dict[str, Any]:
 
 
 @app.on_event("startup")
+async def close_interrupted_run_records_on_startup() -> None:
+    """Mark runs a previous backend left as running; none can still report here."""
+    from quantaalpha.utils.run_record import mark_interrupted_runs
+    closed = await asyncio.to_thread(mark_interrupted_runs, PROJECT_ROOT / "log")
+    if closed:
+        print(f"Marked {len(closed)} run record(s) as interrupted: {', '.join(closed)}", flush=True)
+
+
+@app.on_event("startup")
 async def prune_stale_factor_split_caches_on_startup() -> None:
     result = await asyncio.to_thread(_prune_stale_factor_split_caches)
     if result["removed"]:
@@ -836,6 +906,8 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         env["FACTOR_LIBRARY_SUFFIX"] = req.librarySuffix
         env["MINING_LIGHTGBM_ENABLED"] = "true" if req.miningLightgbmEnabled else "false"
         task["config"]["miningLightgbmEnabled"] = req.miningLightgbmEnabled
+        # Saved once the library name is final, so the record can find it.
+        _save_run_record(task)
 
         date_overrides = {
             "TRAIN_START_DATE": req.trainStartDate,
@@ -1091,6 +1163,7 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
             # into the task, never shown as a log line.
             if _LLM_USAGE_MARKER in line:
                 if _record_llm_usage(task, line):
+                    _save_run_record(task, throttle=True)
                     await _broadcast(task_id, {
                         "type": "usage",
                         "taskId": task_id,
@@ -1109,6 +1182,7 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
                     task["progress"]["currentRound"] = round_idx + 1
                     task["progress"]["progress"] = round(100 * round_idx / total_rounds, 1)
                     task["progress"]["timestamp"] = _now()
+                    _save_run_record(task)
                     await _broadcast(task_id, {
                         "type": "progress",
                         "taskId": task_id,
@@ -1214,6 +1288,10 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
 
         _mark_task_finished(task)
         task["updatedAt"] = _now()
+
+        # A stop finalises the record before the process has drained its
+        # output, so write it again with the usage lines read since.
+        _save_run_record(task)
 
         # Load final factor count from the library JSON
         # Prefer the library file matching the librarySuffix for this experiment
@@ -1359,12 +1437,7 @@ async def start_mining(req: MiningStartRequest):
             "level": "warning",
             "message": resource_note,
         }] if resource_note else []),
-        "metrics": {
-            "ic": 0, "icir": 0, "rankIc": 0, "rankIcir": 0,
-            "annualReturn": 0, "sharpeRatio": 0, "maxDrawdown": 0,
-            "totalFactors": 0, "highQualityFactors": 0,
-            "mediumQualityFactors": 0, "lowQualityFactors": 0,
-        },
+        "metrics": _empty_mining_metrics(),
         "result": None,
         "pid": None,
         "usage": _empty_usage(),
@@ -1451,6 +1524,109 @@ async def get_mining_status(task_id: str):
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="Task not found")
     return ApiResponse(success=True, data={"task": tasks[task_id]})
+
+
+def _live_mining_task(experiment_id: str) -> Optional[Dict[str, Any]]:
+    return next(
+        (t for t in tasks.values()
+         if t.get("type") != "backtest" and t.get("experimentId") == experiment_id),
+        None,
+    )
+
+
+def _overlay_live_task(summary: Dict[str, Any]) -> Dict[str, Any]:
+    """Prefer the in-memory task for a run this backend is tracking.
+
+    run.json is written at most every 20 s while tokens are used; the task is
+    current, so a running run shows its latest status and usage.
+    """
+    task = _live_mining_task(summary["experimentId"])
+    if task is None:
+        return summary
+    progress = task.get("progress") or {}
+    summary.update({
+        "status": task.get("status"),
+        "statusMessage": progress.get("message"),
+        "completedAt": task.get("completedAt"),
+        "completedAtEstimated": False,
+        "durationSeconds": task.get("durationSeconds"),
+        "llm": task.get("llm"),
+        "usage": task.get("usage"),
+        "roundsPlanned": progress.get("totalRounds") or summary.get("roundsPlanned"),
+        "roundsReached": progress.get("currentRound") or summary.get("roundsReached"),
+        "taskId": task.get("taskId"),
+    })
+    return summary
+
+
+def _run_library_metrics(summary: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Top factors of a past run, computed exactly as the live dashboard does."""
+    library = summary.get("library")
+    if not library:
+        return None
+    suffix = library["file"][len("all_factors_library_"):-len(".json")]
+    settings = summary.get("settings") or {}
+    stand_in = {
+        "config": {
+            "librarySuffix": suffix,
+            "evaluationFrequencies": settings.get("evaluationFrequencies") or [],
+            "marketMode": library.get("marketMode") or settings.get("marketMode") or "us",
+        },
+        # Skips factors a shared custom-suffix library got before this run.
+        "createdAt": summary.get("startedAt"),
+        "metrics": _empty_mining_metrics(),
+    }
+    _update_mining_metrics(stand_in)
+    return stand_in["metrics"]
+
+
+@app.get("/api/v1/experiments", response_model=ApiResponse)
+async def list_experiments():
+    """Every mining run under log/, newest first, from the files each left."""
+    from quantaalpha.utils.run_history import list_runs
+
+    runs = await asyncio.to_thread(list_runs, PROJECT_ROOT / "log", PROJECT_ROOT / "data" / "factorlib")
+    return ApiResponse(success=True, data={"runs": [_overlay_live_task(run) for run in runs]})
+
+
+@app.get("/api/v1/experiments/{experiment_id}", response_model=ApiResponse)
+async def get_experiment(experiment_id: str):
+    """One run's record, planned directions, round scores and top factors."""
+    from quantaalpha.utils.round_feedback import is_experiment_id
+    from quantaalpha.utils.run_history import summarize_run
+
+    if not is_experiment_id(experiment_id):
+        raise HTTPException(status_code=400, detail="Invalid experiment id")
+    log_root = PROJECT_ROOT / "log" / experiment_id
+    if not log_root.is_dir():
+        raise HTTPException(status_code=404, detail="No such run")
+
+    def build() -> Dict[str, Any]:
+        summary = summarize_run(log_root, PROJECT_ROOT / "data" / "factorlib", detail=True)
+        summary["factorMetrics"] = _run_library_metrics(summary)
+        return summary
+
+    return ApiResponse(success=True, data=_overlay_live_task(await asyncio.to_thread(build)))
+
+
+@app.get("/api/v1/experiments/{experiment_id}/feedback", response_model=ApiResponse)
+async def get_experiment_feedback(experiment_id: str):
+    """Per-round LLM feedback (accepted and rejected) from a run's trajectory pool.
+
+    Keyed by run folder rather than task id so it still works after a backend
+    restart, when in-memory tasks are gone but log/<experiment_id>/ remains.
+    """
+    from quantaalpha.utils.round_feedback import (
+        FeedbackNotReady, is_experiment_id, load_round_feedback,
+    )
+
+    if not is_experiment_id(experiment_id):
+        raise HTTPException(status_code=400, detail="Invalid experiment id")
+    try:
+        report = await asyncio.to_thread(load_round_feedback, PROJECT_ROOT / "log" / experiment_id)
+    except FeedbackNotReady as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    return ApiResponse(success=True, data={"experimentId": experiment_id, **report})
 
 
 @app.delete("/api/v1/mining/{task_id}", response_model=ApiResponse)

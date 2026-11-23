@@ -8,7 +8,10 @@
 import type {
   ApiResponse,
   Factor,
+  LlmChannel,
+  RealtimeMetrics,
   Task,
+  TokenUsage,
   WsMessage,
 } from '@/types';
 
@@ -217,6 +220,123 @@ export async function getCryptoBuild(taskId: string) {
 
 export async function getMiningStatus(taskId: string) {
   return request<{ task: Task }>(`/api/v1/mining/${taskId}`);
+}
+
+/** One evolution round's LLM feedback, read by the backend from trajectory_pool.json. */
+export interface RoundFeedback {
+  trajectoryId: string;
+  directionId: number | null;
+  roundIdx: number | null;
+  phase: 'original' | 'mutation' | 'crossover' | string;
+  parentIds: string[];
+  createdAt: string;
+  hypothesis: string;
+  /** null when the round produced no feedback (e.g. factor generation failed). */
+  decision: boolean | null;
+  observations: string;
+  hypothesisEvaluation: string;
+  newHypothesis: string;
+  reason: string;
+  factors: { name: string; expression: string }[];
+  /** Best factor of the round on the validation split; null where not computed. */
+  metrics: Record<string, number | null>;
+}
+
+export interface MiningFeedbackReport {
+  experimentId: string;
+  /** false until the run has finished its first round. */
+  available: boolean;
+  savedAt: string | null;
+  rounds: RoundFeedback[];
+}
+
+/**
+ * The run folder (log/exp_YYYYMMDD_HHMMSS) of a mining task. Tasks started
+ * before the backend recorded experimentId only carry it in the default
+ * library suffix; a custom suffix on such a task leaves it unknown.
+ */
+export function experimentIdForTask(task: Pick<Task, 'experimentId' | 'config'>): string | null {
+  if (task.experimentId) return task.experimentId;
+  return task.config?.librarySuffix?.match(/exp_\d{8}_\d{6}/)?.[0] ?? null;
+}
+
+export async function getExperimentFeedback(experimentId: string) {
+  return request<MiningFeedbackReport>(`/api/v1/experiments/${encodeURIComponent(experimentId)}/feedback`);
+}
+
+/**
+ * Outcome of a past run. `interrupted`: the backend stopped mid-run.
+ * `unknown`: the run predates saved run records.
+ */
+export type RunStatus = 'pending' | 'running' | 'completed' | 'cancelled' | 'failed' | 'interrupted' | 'unknown';
+
+/** One run folder under log/, summarised by the backend from the files it left. */
+export interface RunSummary {
+  experimentId: string;
+  /** 'backend' for a record written live, 'backfilled' for one recovered later, null for none. */
+  recordSource: 'backend' | 'backfilled' | null;
+  status: RunStatus;
+  statusMessage: string | null;
+  direction: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  /** True when the end time was inferred from the files rather than stamped at the end. */
+  completedAtEstimated: boolean;
+  durationSeconds: number | null;
+  llm: LlmChannel | null;
+  usage: TokenUsage | null;
+  roundsPlanned: number | null;
+  roundsReached: number | null;
+  rounds: { total: number; accepted: number; rejected: number; noFeedback: number } | null;
+  /** The round with the highest evolution score; metrics are on the validation split. */
+  best: {
+    directionId: number | null;
+    roundIdx: number | null;
+    phase: string;
+    decision: boolean | null;
+    evolutionScore: number | null;
+    ic: number | null;
+    rankIc: number | null;
+    annualizedReturn: number | null;
+    sharpe: number | null;
+    maxDrawdown: number | null;
+  } | null;
+  library: {
+    file: string;
+    factorCount: number;
+    marketMode: 'us' | 'cn' | 'crypto' | null;
+    market: string | null;
+    scopeLabel: string | null;
+    splitWindows: Record<'train' | 'valid' | 'test', [string, string]> | null;
+  } | null;
+  hasResults: boolean;
+  /** Set when this backend is tracking the run live. */
+  taskId?: string;
+}
+
+export interface RunDetail extends RunSummary {
+  plannedDirections: (string | null)[];
+  settings: Record<string, unknown>;
+  evolutionConfig: Record<string, unknown>;
+  scores: {
+    createdAt: string;
+    directionId: number | null;
+    roundIdx: number | null;
+    phase: string;
+    decision: boolean | null;
+    rankIc: number | null;
+    evolutionScore: number | null;
+  }[];
+  /** Top factors from the run's library, computed as the live dashboard does. */
+  factorMetrics: RealtimeMetrics | null;
+}
+
+export async function listExperiments() {
+  return request<{ runs: RunSummary[] }>('/api/v1/experiments');
+}
+
+export async function getExperiment(experimentId: string) {
+  return request<RunDetail>(`/api/v1/experiments/${encodeURIComponent(experimentId)}`);
 }
 
 export async function cancelMining(taskId: string) {

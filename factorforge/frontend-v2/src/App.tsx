@@ -3,6 +3,7 @@ import { HomePage } from '@/pages/HomePage';
 import { MiningDashboardPage } from '@/pages/MiningDashboardPage';
 import { FactorLibraryPage } from '@/pages/FactorLibraryPage';
 import { BacktestPage } from '@/pages/BacktestPage';
+import { RunHistoryPage } from '@/pages/RunHistoryPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { Layout } from '@/components/layout/Layout';
 import type { PageId } from '@/components/layout/Layout';
@@ -12,7 +13,7 @@ import { LanguageProvider } from '@/context/LanguageContext';
 // The active page lives in localStorage so a refresh returns the user to the
 // view they were on instead of dropping them back on Home.
 const PAGE_STORAGE_KEY = 'quantaalpha_last_page';
-const VALID_PAGES: readonly PageId[] = ['home', 'mining_dashboard', 'library', 'backtest', 'settings'];
+const VALID_PAGES: readonly PageId[] = ['home', 'mining_dashboard', 'library', 'history', 'backtest', 'settings'];
 
 const readLastPage = (): PageId => {
   try {
@@ -64,6 +65,11 @@ const AppContent: React.FC = () => {
       <div style={{ display: currentPage === 'library' ? 'block' : 'none' }}>
         <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
           <FactorLibraryPage />
+        </Layout>
+      </div>
+      <div style={{ display: currentPage === 'history' ? 'block' : 'none' }}>
+        <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
+          <RunHistoryPage onNavigate={setCurrentPage} isActive={currentPage === 'history'} />
         </Layout>
       </div>
       <div style={{ display: currentPage === 'backtest' ? 'block' : 'none' }}>

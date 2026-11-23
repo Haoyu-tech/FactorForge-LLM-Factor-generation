@@ -371,6 +371,11 @@ def run_evolution_loop(
     logger.info(f"Generated {len(directions)} exploration directions")
     for i, d in enumerate(directions):
         logger.info(f"  Direction {i}: {d}")
+    try:
+        from quantaalpha.utils.run_record import write_directions
+        write_directions(Path(log_root), initial_direction, directions)
+    except OSError as error:
+        logger.warning(f"Could not save the planned directions: {error}")
 
     pool_save_path = Path(log_root) / "trajectory_pool.json"
     mutation_prompt_path = Path(__file__).parent / "prompts" / "evolution_prompts.yaml"
