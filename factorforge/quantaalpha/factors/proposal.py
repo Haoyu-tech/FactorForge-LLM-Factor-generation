@@ -18,10 +18,40 @@ from quantaalpha.factors.regulator.factor_regulator import FactorRegulator
 from quantaalpha.data.wrds_adapter import (
     RAW_QUARTERLY_FIELDS,
     DERIVED_QUARTERLY_FIELDS,
+    FUNDAMENTAL_TIMING_FIELDS,
 )
+from quantaalpha.data.ibes_adapter import IBES_FIELDS
 
 DEFAULT_HISTORY_LIMIT = 6
 MIN_HISTORY_LIMIT = 1
+
+
+def active_fundamental_fields(market_mode: str) -> tuple[str, ...]:
+    """Fields that count as non-price evidence for a fundamental-direction task."""
+    market_mode = market_mode.lower()
+    if market_mode == "cn":
+        from quantaalpha.data.cn_duckdb_adapter import FINANCIAL_FIELDS
+        return tuple(f"${field}" for field in FINANCIAL_FIELDS)
+    if market_mode == "crypto":
+        # A user may describe funding/basis/flow data as crypto
+        # fundamentals. Require an actual derivatives-market field rather
+        # than accidentally falling back to WRDS accounting variables.
+        return (
+            "$funding_rate", "$quote_volume", "$trade_count",
+            "$taker_buy_ratio", "$listing_age_days",
+        )
+    # Reporting timing (e.g. late reporters) and IBES analyst data are
+    # non-price fields exported with the WRDS store, so they qualify too.
+    return tuple(
+        f"${field}"
+        for field in (RAW_QUARTERLY_FIELDS + DERIVED_QUARTERLY_FIELDS
+                      + FUNDAMENTAL_TIMING_FIELDS + IBES_FIELDS)
+        if not field.endswith("_missing_q")
+    )
+
+
+def uses_fundamental_field(expr, fundamental_fields) -> bool:
+    return any(field in str(expr).lower() for field in fundamental_fields)
 
 
 def render_hypothesis_and_feedback(prompt_dict, trace: Trace, history_limit: int = DEFAULT_HISTORY_LIMIT) -> str:
@@ -445,23 +475,7 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
             "现金", "杠杆", "投资因子", "应计", "fundamental", "profitability",
             "working capital", "asset growth", "sales growth", "leverage",
         )
-        active_market_mode = os.environ.get("MARKET_MODE", "us").lower()
-        if active_market_mode == "cn":
-            from quantaalpha.data.cn_duckdb_adapter import FINANCIAL_FIELDS
-            fundamental_fields = tuple(f"${field}" for field in FINANCIAL_FIELDS)
-        elif active_market_mode == "crypto":
-            # A user may describe funding/basis/flow data as crypto
-            # fundamentals. Require an actual derivatives-market field rather
-            # than accidentally falling back to WRDS accounting variables.
-            fundamental_fields = (
-                "$funding_rate", "$quote_volume", "$trade_count",
-                "$taker_buy_ratio", "$listing_age_days",
-            )
-        else:
-            fundamental_fields = tuple(
-                f"${field}" for field in (RAW_QUARTERLY_FIELDS + DERIVED_QUARTERLY_FIELDS)
-                if not field.endswith("_missing_q")
-            )
+        fundamental_fields = active_fundamental_fields(os.environ.get("MARKET_MODE", "us"))
         requires_fundamental_field = any(
             term in direction_text for term in fundamental_direction_terms
         )
@@ -498,9 +512,7 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
                 formulation = factor_data.get("formulation", "")
                 variables = factor_data.get("variables", {})
                 
-                if requires_fundamental_field and not any(
-                    field in str(expr).lower() for field in fundamental_fields
-                ):
+                if requires_fundamental_field and not uses_fundamental_field(expr, fundamental_fields):
                     logger.warning(
                         f"Direction mismatch: fundamental task produced price-only factor {factor_name}: {expr}"
                     )

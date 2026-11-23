@@ -97,6 +97,73 @@ export interface MiningStartParams {
   testEndDate?: string;
 }
 
+// ===================== Research direction check =====================
+
+export interface DataSourceLink {
+  name: string;
+  url: string;
+  kind?: string;
+  access?: string;
+}
+
+export interface PaperLink {
+  citation: string;
+  url: string;
+}
+
+export interface DataCategory {
+  id: string;
+  label: string;
+  labelZh: string;
+  appliesToMarket: boolean;
+  sources: DataSourceLink[];
+  papers: PaperLink[];
+  note?: string | null;
+}
+
+export type ConceptStatus = 'available' | 'proxy' | 'missing' | 'wrong_market';
+
+export interface DirectionConcept {
+  concept: string;
+  status: ConceptStatus;
+  fields: string[];
+  inventedFields: string[];
+  note?: string | null;
+  categories: DataCategory[];
+  searchTerms: string[];
+  searchLinks: { name: string; url: string }[];
+}
+
+export type DirectionVerdict = 'feasible' | 'partial' | 'unavailable' | 'unclear' | 'no_data';
+
+export interface DirectionCheckResult {
+  verdict: DirectionVerdict;
+  reply: string;
+  marketMode: 'us' | 'cn' | 'crypto';
+  storeFieldCount: number;
+  storeFields: string[];
+  storePath?: string | null;
+  concepts: DirectionConcept[];
+  suggestedDirection?: string | null;
+  /** The direction to mine with the data check appended; null when it cannot be tested. */
+  runDirection?: string | null;
+  replication?: { sources: DataSourceLink[]; papers: PaperLink[] } | null;
+  keywordHits: string[];
+  llm: { used: boolean; error?: string | null };
+}
+
+/** Ask the backend whether a direction can be tested with the stored data. */
+export async function checkResearchDirection(params: {
+  direction: string;
+  marketMode: 'us' | 'cn' | 'crypto';
+  dataSource?: string;
+}) {
+  return request<DirectionCheckResult>('/api/v1/research/check-direction', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
 export async function startMining(params: MiningStartParams) {
   return request<{ taskId: string; task: Task }>('/api/v1/mining/start', {
     method: 'POST',

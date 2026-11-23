@@ -375,6 +375,29 @@ def _load_dotenv_dict() -> Dict[str, str]:
     return env
 
 
+def _apply_llm_backend_env(env: Dict[str, str], dotenv: Dict[str, str]) -> None:
+    """Point a child process at the LLM channel chosen in .env."""
+    if str(dotenv.get("USE_CLAUDE_CLI", "")).lower() in {"1", "true", "yes", "on"}:
+        env["USE_CLAUDE_CLI"] = "true"
+        env["USE_CODEX_CLI"] = "false"
+        env["BACKEND"] = "quantaalpha.llm.rdagent_claude_backend.ClaudeCLIAPIBackend"
+    elif str(dotenv.get("USE_CODEX_CLI", "")).lower() in {"1", "true", "yes", "on"}:
+        env["USE_CODEX_CLI"] = "true"
+        env["USE_CLAUDE_CLI"] = "false"
+        env["BACKEND"] = "quantaalpha.llm.rdagent_codex_backend.CodexCLIAPIBackend"
+
+
+def _qlib_dir_for_market(market_mode: str, data_source: Optional[str], dotenv: Dict[str, str]) -> Optional[str]:
+    """The Qlib store a mining run for this market reads, as _run_mining resolves it."""
+    if market_mode == "crypto":
+        return dotenv.get("CRYPTO_QLIB_DATA_DIR", str(PROJECT_ROOT / "data" / "qlib" / "binance_usdm"))
+    if market_mode == "cn":
+        return dotenv.get("CN_QLIB_DATA_DIR", str(PROJECT_ROOT / "data" / "qlib" / "cn_market"))
+    if (data_source or "wrds") == "wrds":
+        return dotenv.get("WRDS_QLIB_DATA_DIR", str(PROJECT_ROOT / "data" / "qlib" / "wrds_sp500"))
+    return dotenv.get("QLIB_DATA_DIR")
+
+
 def _find_factor_jsons() -> List[str]:
     """Find all factor library JSON files in data/factorlib/."""
     factorlib_dir = PROJECT_ROOT / "data" / "factorlib"
@@ -788,20 +811,14 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         # Record which LLM channel this run uses, before anything is called.
         task["llm"] = _describe_llm_channel(dotenv)
 
-        if str(dotenv.get("USE_CLAUDE_CLI", "")).lower() in {"1", "true", "yes", "on"}:
-            env["USE_CLAUDE_CLI"] = "true"
-            env["USE_CODEX_CLI"] = "false"
-            env["BACKEND"] = "quantaalpha.llm.rdagent_claude_backend.ClaudeCLIAPIBackend"
-        elif str(dotenv.get("USE_CODEX_CLI", "")).lower() in {"1", "true", "yes", "on"}:
-            env["USE_CODEX_CLI"] = "true"
-            env["USE_CLAUDE_CLI"] = "false"
-            env["BACKEND"] = "quantaalpha.llm.rdagent_codex_backend.CodexCLIAPIBackend"
+        _apply_llm_backend_env(env, dotenv)
 
         # Use experiment_id as suffix to guarantee isolation
         experiment_id = f"exp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         env["EXPERIMENT_ID"] = experiment_id
         env["LOG_TRACE_PATH"] = str(PROJECT_ROOT / "log" / experiment_id)
-        
+        task["experimentId"] = experiment_id
+
         if req.marketMode == "crypto" or req.dataSource == "binance_futures":
             market_mode, market = "crypto", "binance_usdm"
         elif req.marketMode == "cn" or req.dataSource == "cn_duckdb":
@@ -1368,6 +1385,64 @@ async def start_mining(req: MiningStartRequest):
         data={"taskId": task_id, "task": task},
         message="实验已启动",
     )
+
+
+class DirectionCheckRequest(BaseModel):
+    direction: str = Field(..., min_length=1, max_length=4000)
+    marketMode: str = "us"
+    dataSource: Optional[str] = None
+
+
+DIRECTION_CHECK_TIMEOUT_SECONDS = 300
+
+
+@app.post("/api/v1/research/check-direction", response_model=ApiResponse)
+async def check_research_direction(req: DirectionCheckRequest):
+    """Say whether a direction can be tested with the stored data, before mining.
+
+    The answer lists the stored fields that measure each part of the idea and,
+    for the parts that are missing, checked sources from
+    quantaalpha/research/source_registry.py. It runs in a child process so the
+    LLM channel is configured exactly as for a mining run.
+    """
+    import tempfile
+
+    market_mode = req.marketMode if req.marketMode in {"us", "cn", "crypto"} else "us"
+    dotenv = _load_dotenv_dict()
+    env = os.environ.copy()
+    env.update(dotenv)
+    _apply_llm_backend_env(env, dotenv)
+    env["MARKET_MODE"] = market_mode
+    qlib_dir = _qlib_dir_for_market(market_mode, req.dataSource, dotenv)
+
+    with tempfile.TemporaryDirectory(prefix="direction_check_") as tmp:
+        direction_file = Path(tmp) / "direction.txt"
+        output_file = Path(tmp) / "result.json"
+        direction_file.write_text(req.direction, encoding="utf-8")
+        cmd = [
+            sys.executable, "-m", "quantaalpha.research.data_feasibility",
+            "--direction-file", str(direction_file),
+            "--market-mode", market_mode,
+            "--output", str(output_file),
+        ]
+        if qlib_dir:
+            cmd += ["--qlib-dir", qlib_dir]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, cwd=str(PROJECT_ROOT), env=env,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            output, _ = await asyncio.wait_for(proc.communicate(), timeout=DIRECTION_CHECK_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise HTTPException(status_code=504, detail="数据可用性检查超时，请稍后重试。")
+        if proc.returncode != 0 or not output_file.exists():
+            tail = output.decode("utf-8", errors="replace")[-800:] if output else ""
+            raise HTTPException(status_code=500, detail=f"数据可用性检查失败：{tail.strip() or proc.returncode}")
+        result = json.loads(output_file.read_text(encoding="utf-8"))
+    result["storePath"] = qlib_dir
+    return ApiResponse(success=True, data=result)
 
 
 @app.get("/api/v1/mining/{task_id}", response_model=ApiResponse)
