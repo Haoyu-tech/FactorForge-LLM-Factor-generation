@@ -3528,6 +3528,10 @@ def _update_mining_metrics(task: Dict[str, Any]):
             cr = annual_ret / abs(max_dd) if max_dd else 0
 
             factor_list.append({
+                # Identify the factor so the UI can link to its own detail page.
+                "factorId": f_id,
+                "library": Path(target_lib).name,
+                "marketMode": factor_market_mode,
                 "factorName": f_info.get("factor_name", f_id),
                 "factorExpression": f_info.get("factor_expression", ""),
                 "quality": q,

@@ -64,6 +64,10 @@ export interface RealtimeMetrics {
   
   // Top 10 factors list
   top10Factors?: Array<{
+    /** Id and library file of the factor, for linking to its detail page. */
+    factorId?: string;
+    library?: string;
+    marketMode?: 'us' | 'cn' | 'crypto';
     factorName: string;
     factorExpression: string;
     rankIc: number;
