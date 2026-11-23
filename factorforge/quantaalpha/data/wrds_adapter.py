@@ -191,6 +191,7 @@ def build_sp500_qlib(
     start_date: str = "1980-01-01",
     end_date: str = "2025-12-31",
     chunk_size: int = 350_000,
+    ibes_root: str | Path | None = None,
 ) -> dict:
     root, output = Path(wrds_root), Path(output_dir)
     source = root / SP500_REL
@@ -226,6 +227,8 @@ def build_sp500_qlib(
                 for source_name, target_name in (("DlyOpen", "open"), ("DlyHigh", "high"), ("DlyLow", "low")):
                     chunk[target_name] = pd.to_numeric(chunk[source_name], errors="coerce").fillna(close) / adjustment
                 chunk["close"] = close / adjustment
+                # Unadjusted close, only for scaling unadjusted IBES values; not exported.
+                chunk["raw_close"] = close
                 chunk["volume"] = pd.to_numeric(chunk["DlyVol"], errors="coerce").fillna(0).abs() * share_adjustment
                 chunk["factor"] = 1.0
                 chunk["change"] = pd.to_numeric(chunk["DlyRet"], errors="coerce")
@@ -234,7 +237,7 @@ def build_sp500_qlib(
                 chunk["ret_total"] = combine_return(chunk["change"], chunk["delist_return"])
                 for symbol, group in chunk.groupby("symbol", sort=False):
                     path = staging / f"{symbol.lower()}.csv"
-                    group[["date", "symbol", "open", "high", "low", "close", "volume", "factor", "change", "ret_total", "delist_return"]].to_csv(
+                    group[["date", "symbol", "open", "high", "low", "close", "volume", "factor", "change", "ret_total", "delist_return", "raw_close"]].to_csv(
                         path, mode="a", header=not path.exists(), index=False
                     )
                 members = chunk[["symbol", "MbrStartDt", "MbrEndDt"]].drop_duplicates()
@@ -246,9 +249,21 @@ def build_sp500_qlib(
     permnos = {int(symbol[1:]) for symbol, _, _ in membership if symbol.startswith("P")}
     fundamentals = _load_point_in_time_fundamentals(root, permnos, start_date, end_date)
     fundamental_fields = list(EXPORTED_FUNDAMENTAL_FIELDS)
+    from .ibes_adapter import IBES_FIELDS, attach_ibes, inspect_ibes, load_ibes
+    ibes_tables: dict = {}
+    ibes_summary: dict | None = None
+    if ibes_root:
+        status = inspect_ibes(ibes_root)
+        if not status["ready"]:
+            raise FileNotFoundError(f"IBES tables missing or unreadable in {ibes_root}: {status['missing']}")
+        ibes_tables, ibes_summary = load_ibes(ibes_root, root, permnos, start_date, end_date)
+        fundamental_fields += IBES_FIELDS
     for path in staging.glob("p*.csv"):
         permno = int(path.stem[1:])
         daily = pd.read_csv(path, parse_dates=["date"]).sort_values("date")
+        if ibes_root:
+            daily = attach_ibes(daily, ibes_tables.get(permno))
+        daily = daily.drop(columns=["raw_close"])
         quarterly = fundamentals.get(permno)
         if quarterly is not None and not quarterly.empty:
             daily = pd.merge_asof(
@@ -308,6 +323,7 @@ def build_sp500_qlib(
         "fundamental_instruments": len(fundamentals),
         "fundamental_timing": "rdq; datadate+90d fallback; backward as-of only",
         "fundamental_fields": fundamental_fields,
+        "ibes": ibes_summary,
     }
     (binary_staging / "wrds_manifest.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     backup = output.parent / f"{output.name}_previous"

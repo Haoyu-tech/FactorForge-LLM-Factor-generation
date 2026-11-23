@@ -87,6 +87,16 @@ class QlibAlphaAgentScenario(QlibFactorScenario):
                     "(or datadate+90 days when missing) and are only forward-filled afterward. "
                     "Do not replace missing accounting values with zero. Kelly 153 is catalogued but not unpacked automatically."
                 )
+                from quantaalpha.data.ibes_adapter import FIELD_DESCRIPTIONS as IBES_DESCRIPTIONS
+                from quantaalpha.research.data_feasibility import store_fields
+                ibes_present = [f for f in IBES_DESCRIPTIONS if f in set(store_fields(os.environ.get("QLIB_DATA_DIR")))]
+                if ibes_present:
+                    self._background += (
+                        "\nIBES analyst fields (linked to PERMNO by CUSIP; each value is usable from the trading "
+                        "session after its IBES consensus or announcement date, and is NaN when coverage lapses): "
+                        + "; ".join(f"${f}: {IBES_DESCRIPTIONS[f]}" for f in ibes_present)
+                        + ". There is no consensus EPS forecast or EPS revision field."
+                    )
             experiment_context = (
                 f"S&P 500; data source {source}; train {train}, validation {valid}, test {test}. "
                 "During factor mining, use validation statistics for every proposal, feedback, and evolution decision. "

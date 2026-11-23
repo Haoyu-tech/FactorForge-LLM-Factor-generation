@@ -160,6 +160,7 @@ class SystemConfigUpdate(BaseModel):
     MINING_LIGHTGBM_ENABLED: Optional[bool] = None
     DATA_SOURCE: Optional[str] = None
     WRDS_ROOT: Optional[str] = None
+    IBES_ROOT: Optional[str] = None
     WRDS_QLIB_DATA_DIR: Optional[str] = None
     MARKET_MODE: Optional[str] = None
     DEFAULT_MARKET: Optional[str] = None
@@ -2690,6 +2691,9 @@ async def get_wrds_status():
     wrds_root = dotenv.get("WRDS_ROOT", "/mnt/d/桌面文件/US stock research/wrds")
     try:
         catalog = await asyncio.to_thread(inspect_wrds, wrds_root)
+        from quantaalpha.data.ibes_adapter import default_ibes_root, inspect_ibes
+        ibes_root = default_ibes_root(wrds_root, dotenv.get("IBES_ROOT"))
+        catalog["ibes"] = await asyncio.to_thread(inspect_ibes, ibes_root)
         qlib_dir = Path(dotenv.get("WRDS_QLIB_DATA_DIR", str(PROJECT_ROOT / "data" / "qlib" / "wrds_sp500")))
         catalog["qlib"] = {
             "path": str(qlib_dir),
@@ -2709,10 +2713,12 @@ async def _run_wrds_build(task_id: str, request: WrdsBuildRequest):
         dotenv = _load_dotenv_dict()
         wrds_root = dotenv.get("WRDS_ROOT", "/mnt/d/桌面文件/US stock research/wrds")
         output = dotenv.get("WRDS_QLIB_DATA_DIR", str(PROJECT_ROOT / "data" / "qlib" / "wrds_sp500"))
+        from quantaalpha.data.ibes_adapter import default_ibes_root
+        ibes_root = default_ibes_root(wrds_root, dotenv.get("IBES_ROOT"))
         task["progress"]["message"] = "正在从 WRDS 流式构建历史 S&P 500 Qlib 数据..."
         metadata = await asyncio.to_thread(
             build_sp500_qlib, wrds_root, output, PROJECT_ROOT,
-            request.startDate, request.endDate,
+            request.startDate, request.endDate, ibes_root=ibes_root,
         )
         task["status"] = "completed"
         task["progress"].update({"progress": 100, "phase": "completed", "message": "WRDS Qlib 数据构建完成"})

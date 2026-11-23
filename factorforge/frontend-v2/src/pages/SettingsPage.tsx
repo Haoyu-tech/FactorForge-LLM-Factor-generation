@@ -56,6 +56,8 @@ interface SystemConfig {
   cnExcludeBse: boolean;
   cnNewStockMinTradingDays: number;
   wrdsRoot: string;
+  /** Folder of IBES parquet tables; empty means WRDS_ROOT/IBES when it exists. */
+  ibesRoot: string;
   wrdsQlibPath: string;
   cryptoQlibPath: string;
   cryptoMaxSymbols: number;
@@ -111,6 +113,7 @@ const DEFAULT_CONFIG: SystemConfig = {
   cnExcludeBse: false,
   cnNewStockMinTradingDays: 375,
   wrdsRoot: '/mnt/d/桌面文件/US stock research/wrds',
+  ibesRoot: '',
   wrdsQlibPath: '/home/alpha/projects/QuantaAlpha/data/qlib/wrds_sp500',
   cryptoQlibPath: '/home/alpha/projects/QuantaAlpha/data/qlib/binance_usdm',
   cryptoMaxSymbols: 100,
@@ -291,6 +294,7 @@ export const SettingsPage: React.FC = () => {
           cnExcludeBse: String(env.CN_EXCLUDE_BSE || 'false').toLowerCase() === 'true',
           cnNewStockMinTradingDays: Number(env.CN_NEW_STOCK_MIN_TRADING_DAYS || 375),
           wrdsRoot: env.WRDS_ROOT || DEFAULT_CONFIG.wrdsRoot,
+          ibesRoot: env.IBES_ROOT || DEFAULT_CONFIG.ibesRoot,
           wrdsQlibPath: env.WRDS_QLIB_DATA_DIR || DEFAULT_CONFIG.wrdsQlibPath,
           cryptoQlibPath: env.CRYPTO_QLIB_DATA_DIR || DEFAULT_CONFIG.cryptoQlibPath,
           cryptoMaxSymbols: Number(env.CRYPTO_MAX_SYMBOLS || 100),
@@ -411,6 +415,7 @@ export const SettingsPage: React.FC = () => {
       update.CN_EXCLUDE_BSE = config.cnExcludeBse ? 'true' : 'false';
       update.CN_NEW_STOCK_MIN_TRADING_DAYS = String(config.cnNewStockMinTradingDays);
       update.WRDS_ROOT = config.wrdsRoot;
+      update.IBES_ROOT = config.ibesRoot;
       update.WRDS_QLIB_DATA_DIR = config.wrdsQlibPath;
       update.CRYPTO_QLIB_DATA_DIR = config.cryptoQlibPath;
       update.CRYPTO_MAX_SYMBOLS = String(config.cryptoMaxSymbols);
@@ -902,6 +907,19 @@ export const SettingsPage: React.FC = () => {
                     </p>
                   </div>
                   <div>
+                    <label className="block text-sm font-medium mb-2">IBES 数据目录（parquet）</label>
+                    <input
+                      type="text"
+                      value={config.ibesRoot}
+                      placeholder="留空则使用 WRDS 根目录下的 IBES 文件夹"
+                      onChange={(event) => updateConfigField('ibesRoot', event.target.value)}
+                      className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm font-mono"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      需要 idsum、recdsum、ptgsumu、surpsumu。构建时按 CUSIP 链接到 PERMNO，分析师评级、目标价与盈利意外从发布后下一个交易日起可用。
+                    </p>
+                  </div>
+                  <div>
                     <label className="block text-sm font-medium mb-2">WRDS 生成的 Qlib 目录</label>
                     <input
                       type="text"
@@ -930,6 +948,18 @@ export const SettingsPage: React.FC = () => {
                           <div>Qlib 数据：{wrdsStatus.qlib?.built ? '已构建' : '尚未构建'}</div>
                           <div>FF 日频范围：{wrdsStatus.factor_ranges?.ff5_mom?.start} ～ {wrdsStatus.factor_ranges?.ff5_mom?.end}</div>
                           <div>标识口径：PERMNO；成分口径：按 MbrStartDt/MbrEndDt 动态替换</div>
+                          <div>
+                            IBES：{wrdsStatus.ibes?.ready
+                              ? `可用（${wrdsStatus.ibes.root}）`
+                              : `不可用${wrdsStatus.ibes?.missing?.length ? `，缺少 ${wrdsStatus.ibes.missing.join(', ')}` : ''}`}
+                            {wrdsStatus.ibes?.unreadable?.length ? `；无法读取 ${wrdsStatus.ibes.unreadable.join(', ')}` : ''}
+                            {wrdsStatus.ibes?.ready && !wrdsStatus.ibes?.epsRevisionsAvailable ? '；无 statsum_epsus，EPS 预测调整不可用' : ''}
+                          </div>
+                          <div>
+                            Qlib 中的 IBES 字段：{wrdsStatus.qlib?.manifest?.ibes
+                              ? `${wrdsStatus.qlib.manifest.ibes.fields.length} 个，链接 ${wrdsStatus.qlib.manifest.ibes.linked_permnos} 个 PERMNO`
+                              : '尚未构建（构建/刷新后加入）'}
+                          </div>
                         </>
                       )}
                     </div>
