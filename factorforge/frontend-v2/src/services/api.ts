@@ -16,6 +16,33 @@ import type {
 
 const BASE = ''; // Vite proxy handles /api -> backend
 
+/**
+ * An error the backend answered with, as opposed to a connection failure.
+ *
+ * Callers need the difference: a 409 "a run is already active" means the
+ * service is healthy and declining, and must not be reported as offline.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+/** Pull FastAPI's `detail` out of an error body, falling back to raw text. */
+function errorDetail(status: number, body: string): string {
+  try {
+    const parsed = JSON.parse(body);
+    const detail = parsed?.detail ?? parsed?.error;
+    if (typeof detail === 'string' && detail.trim()) return detail;
+  } catch {
+    // Not JSON; fall through to the raw body.
+  }
+  return body.trim() ? `API Error ${status}: ${body}` : `API Error ${status}`;
+}
+
 async function request<T = any>(
   path: string,
   options: RequestInit = {}
@@ -35,7 +62,7 @@ async function request<T = any>(
   }
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`API Error ${res.status}: ${text}`);
+    throw new ApiError(res.status, errorDetail(res.status, text));
   }
   return res.json();
 }
@@ -422,4 +449,58 @@ export function connectMiningWs(
   }, 30000);
 
   return ws;
+}
+
+// ========================== Benchmark models API ==========================
+
+export interface MetricDefinition {
+  label: string;
+  formula: string;
+  description: string;
+  implementation: string;
+  file: string;
+  line: number | null;
+}
+
+export interface BenchmarkModelResult {
+  model: string;
+  label: string;
+  market: string;
+  implementation: string;
+  metrics: { IC: number; ICIR: number; 'Rank IC': number; 'Rank ICIR': number };
+  portfolio: Record<string, { annualized_net_return?: number; max_drawdown?: number; sharpe_ratio?: number }>;
+  preferred_leg: 'long' | 'long_short';
+  hyperparameters: Record<string, number | string>;
+  training: { seconds: number; epochs_run: number };
+  features: { handler: string; count: number; step_len: number };
+  split: Record<'train' | 'valid' | 'test', [string, string]>;
+  generated_at: string;
+  smoke_run: boolean;
+  file: string;
+}
+
+export interface BenchmarkModelsResponse {
+  market: string;
+  models: BenchmarkModelResult[];
+  definitions: Record<string, MetricDefinition>;
+  normalization: { formula: string; description: string };
+  available_models: Array<{ id: string; label: string; implementation: string }>;
+  torch_available: boolean;
+  running: Array<{ taskId: string; status: string; progress: any }>;
+}
+
+export async function getBenchmarkModels(market?: string) {
+  const query = market ? `?market=${encodeURIComponent(market)}` : '';
+  return request<BenchmarkModelsResponse>(`/api/v1/benchmarks/models${query}`);
+}
+
+export async function runBenchmarkModels(params: { models: string[]; market?: string }) {
+  return request<{ taskId: string; task: Task }>('/api/v1/benchmarks/run', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+export async function getBenchmarkRun(taskId: string) {
+  return request<{ task: Task }>(`/api/v1/benchmarks/run/${taskId}`);
 }

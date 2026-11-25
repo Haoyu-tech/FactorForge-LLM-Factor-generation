@@ -288,6 +288,7 @@ def evaluate_factor_split(
     from qlib.data import D
     from quantaalpha.market.profile import (
         apply_market_eligibility, eligibility_fields, get_market_profile, qlib_region,
+        load_held_returns,
     )
 
     provider = env.get("QLIB_DATA_DIR") or env.get("WRDS_QLIB_DATA_DIR")
@@ -341,11 +342,15 @@ def evaluate_factor_split(
 
     instruments = D.instruments(profile.instrument)
     market_fields = profile.qlib_classification_fields + eligibility_fields(profile)
-    fields = ["Ref($close, -2) / Ref($close, -1) - 1", *market_fields]
+    label_expression = "Ref($close, -2) / Ref($close, -1) - 1"
+    fields = [label_expression, *market_fields]
     frame = D.features(instruments, fields, start_time=start, end_time=end, freq="day")
     if frame.empty:
         raise ValueError(f"{split} 区间没有可用的 {profile.name} 数据")
     frame.columns = ["label", *[field[1:] for field in market_fields]]
+    # Held names keep earning returns after they leave the universe.
+    held = load_held_returns(D, profile.instrument, label_expression, start, end)
+    realized = held.iloc[:, 0] if not held.empty else frame["label"]
     signal = _signal_from_factor(factor, project_root, env)
     dates = signal.index.get_level_values("datetime")
     signal = signal[(dates >= pd.Timestamp(start)) & (dates <= pd.Timestamp(end))]
@@ -360,7 +365,7 @@ def evaluate_factor_split(
     ] or ["day", "week", "month"]
     _, analytics, group_analytics, metrics = calculate_industry_aware_analytics(
         signal,
-        frame["label"],
+        realized,
         frame[list(profile.classification_fields)],
         frequencies=frequencies,
         classification_levels=profile.classification_fields,

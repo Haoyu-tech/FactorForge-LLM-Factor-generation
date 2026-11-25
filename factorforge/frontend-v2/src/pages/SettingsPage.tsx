@@ -83,6 +83,14 @@ interface SystemConfig {
   selectedMiningDirectionIndices: number[];
 }
 
+// Anthropic's OpenAI-compatible endpoint: lets the OpenAI-API provider talk to online Claude.
+const ANTHROPIC_OPENAI_COMPAT_URL = 'https://api.anthropic.com/v1/';
+const CLAUDE_ONLINE_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
+const isClaudeOnlineModel = (m: string) => CLAUDE_ONLINE_MODELS.includes(m);
+// .env stores litellm-style "openai/<model>" (RD-Agent needs the prefix; client.py strips it).
+const stripProviderPrefix = (m: string) => (m.startsWith('openai/') ? m.slice('openai/'.length) : m);
+const withProviderPrefix = (m: string) => (m.includes('/') ? m : `openai/${m}`);
+
 const DEFAULT_CONFIG: SystemConfig = {
   llmProvider: 'codex_cli',
   apiKey: '',
@@ -267,7 +275,7 @@ export const SettingsPage: React.FC = () => {
             : String(env.USE_CODEX_CLI || '').toLowerCase() === 'true' ? 'codex_cli' : 'openai_api',
           apiKey: env.OPENAI_API_KEY || '',
           apiUrl: env.OPENAI_BASE_URL || DEFAULT_CONFIG.apiUrl,
-          modelName: env.CHAT_MODEL || DEFAULT_CONFIG.modelName,
+          modelName: stripProviderPrefix(env.CHAT_MODEL || '') || DEFAULT_CONFIG.modelName,
           codexModel: env.CODEX_CLI_MODEL || '',
           claudeModel: env.CLAUDE_CLI_MODEL || 'sonnet',
           qlibDataPath: env.QLIB_DATA_DIR || '',
@@ -383,8 +391,11 @@ export const SettingsPage: React.FC = () => {
       }
       if (config.apiUrl) update.OPENAI_BASE_URL = config.apiUrl;
       if (config.modelName) {
-        update.CHAT_MODEL = config.modelName;
-        update.REASONING_MODEL = config.modelName;
+        const chatModel = config.llmProvider === 'openai_api'
+          ? withProviderPrefix(config.modelName)
+          : config.modelName;
+        update.CHAT_MODEL = chatModel;
+        update.REASONING_MODEL = chatModel;
       }
       if (config.qlibDataPath) update.QLIB_DATA_DIR = config.qlibDataPath;
       if (config.resultsDir) update.DATA_RESULTS_DIR = config.resultsDir;
@@ -780,9 +791,20 @@ export const SettingsPage: React.FC = () => {
                 <label className="block text-sm font-medium mb-2">模型名称</label>
                 <select
                   value={config.modelName}
-                  onChange={(e) => updateConfigField('modelName', e.target.value)}
+                  onChange={(e) => {
+                    const model = e.target.value;
+                    updateConfigField('modelName', model);
+                    if (isClaudeOnlineModel(model) && config.apiUrl !== ANTHROPIC_OPENAI_COMPAT_URL) {
+                      updateConfigField('apiUrl', ANTHROPIC_OPENAI_COMPAT_URL);
+                    }
+                  }}
                   className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
                 >
+                  <optgroup label="在线 Claude（Anthropic OpenAI 兼容接口）">
+                    <option value="claude-opus-5-5">Claude Opus 5.5</option>
+                    <option value="claude-sonnet-5-5">Claude Sonnet 5.5</option>
+                    <option value="claude-haiku-5-5">Claude Haiku 5.5</option>
+                  </optgroup>
                   <option value="deepseek-v3">DeepSeek V3</option>
                   <option value="qwen38-27b">Auckland Qwen3.8-27B</option>
                   <option value="gemma-4-26B-A4B-it">Auckland Gemma 4 26B A4B</option>
@@ -793,6 +815,11 @@ export const SettingsPage: React.FC = () => {
                   <option value="gpt-4-turbo">GPT-4 Turbo</option>
                   <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
                 </select>
+                {isClaudeOnlineModel(config.modelName) && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    在线 Claude 走 Anthropic 的 OpenAI 兼容接口：API Base URL 已设为 https://api.anthropic.com/v1/，API Key 请填写 Anthropic API Key（sk-ant-...），按 API 用量计费。
+                  </p>
+                )}
               </div>
               </>)}
 

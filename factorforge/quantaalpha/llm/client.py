@@ -188,6 +188,82 @@ def _sdk_model_name(model: str) -> str:
     return model
 
 
+LLM_USAGE_MARKER = "[LLM_USAGE]"
+
+# Spellings OpenAI-compatible gateways use for a cost they bill alongside token
+# usage. The OpenAI SDK preserves unknown response fields, so the real figure is
+# readable when the gateway sends one.
+_REPORTED_COST_FIELDS = ("cost", "total_cost", "cost_usd", "total_cost_usd", "estimated_cost")
+
+
+def _extract_reported_cost(usage: Any) -> float | None:
+    """Return the cost an API reported with its usage, or None if it reported none.
+
+    None and 0.0 must stay distinct: a free call really did cost nothing, while
+    a gateway that reports no cost leaves us with nothing to show. Never
+    estimates — only what the provider actually sent back.
+    """
+    for field in _REPORTED_COST_FIELDS:
+        value = getattr(usage, field, None)
+        if value is None and isinstance(usage, dict):
+            value = usage.get(field)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
+
+
+def _transport_for(source: str) -> str:
+    """How the call was made, for attributing spend: a local CLI or a billed API."""
+    if source.endswith("_cli"):
+        return "cli"
+    if source in {"openai", "api"}:
+        return "api"
+    return "other"
+
+
+def _report_token_usage(
+    prompt_tokens: Any,
+    completion_tokens: Any,
+    *,
+    source: str,
+    model: str | None = None,
+    cost_usd: Any = None,
+) -> None:
+    """Print one machine-readable usage line per LLM call.
+
+    The web backend runs the miner as a subprocess and sums these lines from its
+    stdout to show a job's token consumption. It is a plain ``print`` rather than
+    a logger call so the line format does not depend on logger configuration,
+    and parallel worker processes inherit the same stdout.
+    """
+    try:
+        prompt = int(prompt_tokens or 0)
+        completion = int(completion_tokens or 0)
+    except (TypeError, ValueError):
+        return
+    if prompt <= 0 and completion <= 0:
+        return
+    record: dict[str, Any] = {
+        "prompt": prompt,
+        "completion": completion,
+        "source": source,
+        "transport": _transport_for(source),
+    }
+    if model:
+        record["model"] = model
+    try:
+        if cost_usd is not None:
+            record["costUsd"] = float(cost_usd)
+    except (TypeError, ValueError):
+        pass
+    try:
+        print(f"{LLM_USAGE_MARKER} {json.dumps(record)}", flush=True)
+    except Exception:
+        pass  # usage accounting must never break a completion
+
+
 def _preview(text: str | None, limit: int = 200) -> str:
     """Render a response snippet for logging.
 
@@ -989,6 +1065,27 @@ class APIBackend:
             raise RuntimeError(
                 f"Claude CLI failed with exit code {completed.returncode}: {str(details)[-2000:]}"
             )
+        usage = payload.get("usage") or {}
+        if isinstance(usage, dict):
+            # Cache reads and writes are still input the model processed.
+            prompt_tokens = sum(
+                int(usage.get(key) or 0)
+                for key in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+            )
+            # Prefer the model the CLI says it actually served, since the
+            # configured value may be an alias such as "opus"; fall back to the
+            # configured name when the payload does not report one.
+            served = payload.get("modelUsage")
+            reported_model = (
+                next(iter(served), None) if isinstance(served, dict) and served else None
+            )
+            _report_token_usage(
+                prompt_tokens,
+                usage.get("output_tokens"),
+                source="claude_cli",
+                model=reported_model or LLM_SETTINGS.claude_cli_model.strip() or None,
+                cost_usd=payload.get("total_cost_usd"),
+            )
         if json_mode:
             result = json.dumps(robust_json_parse(result), ensure_ascii=False)
         return result
@@ -1066,6 +1163,15 @@ class APIBackend:
                     assistant_messages.append(text)
             if event.get("type") in {"error", "turn.failed"}:
                 reported_errors.append(json.dumps(event, ensure_ascii=False))
+            if event.get("type") == "turn.completed" and isinstance(event.get("usage"), dict):
+                usage = event["usage"]
+                # Codex reports cached_input_tokens as a subset of input_tokens.
+                _report_token_usage(
+                    usage.get("input_tokens"),
+                    usage.get("output_tokens"),
+                    source="codex_cli",
+                    model=LLM_SETTINGS.codex_cli_model.strip() or None,
+                )
 
         if completed.returncode != 0 or not assistant_messages:
             details = "\n".join(reported_errors) or stderr.strip() or stdout.strip()
@@ -1202,12 +1308,30 @@ class APIBackend:
             extra_body = os.environ.get("QUANTAALPHA_CHAT_EXTRA_BODY")
             if extra_body:
                 kwargs["extra_body"] = json.loads(extra_body)
-            response = self.chat_client.chat.completions.create(**kwargs)
+            if self.chat_stream:
+                # Without this a streamed response carries no usage block.
+                kwargs["stream_options"] = {"include_usage": True}
+            try:
+                response = self.chat_client.chat.completions.create(**kwargs)
+            except openai.BadRequestError:
+                if "stream_options" not in kwargs:
+                    raise
+                # Some OpenAI-compatible gateways reject stream_options.
+                kwargs.pop("stream_options")
+                response = self.chat_client.chat.completions.create(**kwargs)
 
-            
             if self.chat_stream:
                 resp = ""
                 for chunk in response:
+                    chunk_usage = getattr(chunk, "usage", None)
+                    if chunk_usage is not None:
+                        _report_token_usage(
+                            getattr(chunk_usage, "prompt_tokens", 0),
+                            getattr(chunk_usage, "completion_tokens", 0),
+                            source="openai",
+                            model=model,
+                            cost_usd=_extract_reported_cost(chunk_usage),
+                        )
                     content = (
                         chunk.choices[0].delta.content
                         if len(chunk.choices) > 0 and chunk.choices[0].delta.content is not None
@@ -1224,6 +1348,14 @@ class APIBackend:
             else:
                 resp = response.choices[0].message.content
                 finish_reason = response.choices[0].finish_reason
+                if response.usage is not None:
+                    _report_token_usage(
+                        response.usage.prompt_tokens,
+                        response.usage.completion_tokens,
+                        source="openai",
+                        model=model,
+                        cost_usd=_extract_reported_cost(response.usage),
+                    )
                 if LLM_SETTINGS.log_llm_chat_content:
                     display_resp = _preview(resp)
                     logger.info(f"{LogColors.CYAN}Response:{display_resp}{LogColors.END}", tag="llm_messages")

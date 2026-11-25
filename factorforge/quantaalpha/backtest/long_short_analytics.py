@@ -6,6 +6,17 @@ import pandas as pd
 
 VALID_FREQUENCIES = ("day", "week", "month")
 
+
+def default_periods_per_year(environment=None) -> float:
+    """Return observations per year: 252 trading days for equities, 365.25 for crypto.
+
+    Crypto perpetuals trade every calendar day, and 365.25 is the average
+    calendar year including leap years. Equity panels hold trading days only.
+    """
+    import os
+    env = os.environ if environment is None else environment
+    return 365.25 if str(env.get("MARKET_MODE", "us")).strip().lower() == "crypto" else 252.0
+
 def _series(data, name):
     s = data if isinstance(data, pd.Series) else data.iloc[:, 0]
     if not isinstance(s.index, pd.MultiIndex) or s.index.nlevels < 2:
@@ -43,26 +54,31 @@ def _weights(group, quantile, minimum):
             result[f"group_{i}"] = pd.Series(1.0 / len(members), index=members)
     return result
 
-def _summary(rows, rebalances):
+def _summary(rows, rebalances, periods_per_year=252.0):
     if not rows:
         return {}
     frame = pd.DataFrame(rows).set_index("date").sort_index()
     net, gross = frame.net_return.clip(lower=-.999999), frame.gross_return.clip(lower=-.999999)
     ne, ge = (1 + net).cumprod(), (1 + gross).cumprod()
     periods, std = len(frame), float(net.std(ddof=1)) if len(frame) > 1 else 0.0
-    annual = lambda e: float(e.iloc[-1] ** (252.0 / periods) - 1.0)
-    dd = ne / ne.cummax() - 1
+    ppy = float(periods_per_year)
+    annual = lambda e: float(e.iloc[-1] ** (ppy / periods) - 1.0)
+    # Wealth starts at 1.0, so a loss on the first day counts toward drawdown.
+    dd = ne / np.maximum(ne.cummax(), 1.0) - 1
     active = frame.loc[frame.is_rebalance, "turnover"]
     return {
         "annualized_gross_return": annual(ge), "annualized_net_return": annual(ne),
-        "total_net_return": float(ne.iloc[-1] - 1), "annualized_volatility": std * np.sqrt(252.0),
-        "sharpe_ratio": float(net.mean() / std * np.sqrt(252.0)) if std > 0 else 0.0,
+        "total_net_return": float(ne.iloc[-1] - 1), "annualized_volatility": std * np.sqrt(ppy),
+        "sharpe_ratio": float(net.mean() / std * np.sqrt(ppy)) if std > 0 else 0.0,
         "max_drawdown": float(dd.min()), "average_daily_turnover": float(frame.turnover.mean()),
         "average_turnover_per_rebalance": float(active.mean()) if len(active) else 0.0,
-        "annualized_turnover": float(frame.turnover.mean() * 252.0),
+        "annualized_turnover": float(frame.turnover.mean() * ppy),
         "total_transaction_cost": float(frame.transaction_cost.sum()),
         "total_borrow_cost": float(frame.borrow_cost.sum()),
         "average_positions": float(frame.positions.mean()), "rebalance_count": int(rebalances),
+        # Average share of gross exposure held in names with no return that day.
+        "missing_return_exposure": float(frame["missing_return_exposure"].mean())
+        if "missing_return_exposure" in frame else 0.0,
         "curve": [{"date": d.strftime("%Y-%m-%d"), "value": float(v - 1)} for d, v in ne.items()],
         "daily_net_returns": [
             {"date": d.strftime("%Y-%m-%d"), "value": float(v)}
@@ -70,51 +86,103 @@ def _summary(rows, rebalances):
         ],
     }
 
+def held_returns(weights, day_returns, missing_return=0.0):
+    """Returns earned by held names, and the gross weight whose return is missing.
+
+    A held name earns its realized return whether or not it still has a
+    signal. A return that does not exist (suspended, delisted after its final
+    return, no data) is booked at ``missing_return``.
+    """
+    if day_returns is None:
+        returns = pd.Series(np.nan, index=weights.index, dtype=float)
+    else:
+        returns = day_returns.reindex(weights.index).astype(float)
+    missing = returns.isna().to_numpy()
+    return returns.fillna(float(missing_return)), float(np.abs(weights.to_numpy()[missing]).sum())
+
+def drift_weights(weights, returns, portfolio_return):
+    """Weights after one period, as a fraction of the new portfolio value.
+
+    Each position grows by its own return and the residual cash (1 - sum w)
+    earns zero, so w_i' = w_i (1 + r_i) / (1 + R_p). This holds for long-only
+    and for dollar-neutral long-short books alike.
+    """
+    nav = 1.0 + float(portfolio_return)
+    if weights.empty or not np.isfinite(nav) or nav <= 1e-9:
+        return pd.Series(dtype=float)
+    return weights * (1.0 + returns) / nav
+
 def calculate_multi_frequency_analytics(signal, realized, frequencies=("day",), *,
-        quantile=.1, min_positions=20, transaction_cost=.0005, short_borrow_rate=0.0):
-    """Daily P&L for daily/weekly/monthly rebalancing; long-short is 50/50."""
-    joined = pd.concat([_series(signal, "signal").rename("score"),
-                        _series(realized, "return").rename("realized_return")], axis=1, join="inner")
-    joined = joined.replace([np.inf, -np.inf], np.nan).dropna()
-    if joined.empty:
+        quantile=.1, min_positions=20, transaction_cost=.0005, short_borrow_rate=0.0,
+        periods_per_year=None, missing_return=0.0):
+    """Daily P&L for daily/weekly/monthly rebalancing; long-short is 50/50.
+
+    ``realized`` at date t is the return earned by a position formed from the
+    signal at t. Portfolios are formed from every name with a finite signal;
+    whether its realized return later turns out to be missing is unknown at
+    formation and is never used to choose names. Held names keep earning
+    their realized return when their signal drops out (``realized`` may
+    therefore cover more instruments than ``signal``). Between rebalances
+    weights drift with returns, and rebalance turnover is measured from the
+    drifted weights to the new targets.
+    """
+    score = _series(signal, "signal").replace([np.inf, -np.inf], np.nan).dropna()
+    returns = _series(realized, "return").replace([np.inf, -np.inf], np.nan).dropna()
+    if score.empty or returns.empty:
+        raise ValueError("No prediction/return overlap for long-short analytics")
+    score_dates = score.index.get_level_values("datetime")
+    return_dates = returns.index.get_level_values("datetime")
+    returns = returns[(return_dates >= score_dates.min()) & (return_dates <= score_dates.max())]
+    if score.index.intersection(returns.index).empty:
         raise ValueError("No prediction/return overlap for long-short analytics")
     frequencies = list(dict.fromkeys(str(f).strip().lower() for f in frequencies)) or ["day"]
     bad = [f for f in frequencies if f not in VALID_FREQUENCIES]
     if bad:
         raise ValueError(f"Unsupported evaluation frequencies: {bad}")
-    dates = pd.DatetimeIndex(joined.index.get_level_values("datetime").unique()).sort_values()
+    scores_by_date = {pd.Timestamp(d): g.droplevel("datetime").to_frame("score")
+                      for d, g in score.groupby(level="datetime", sort=True)}
+    returns_by_date = {pd.Timestamp(d): g.droplevel("datetime")
+                       for d, g in returns.groupby(level="datetime", sort=True)}
+    # A P&L date needs at least one observed return. The last sessions of a
+    # sample have signals but no realized label yet and are not P&L dates.
+    dates = pd.DatetimeIndex(sorted(returns_by_date))
+    signal_dates = pd.DatetimeIndex(sorted(set(scores_by_date) & set(returns_by_date)))
     names = ["long", "short", "long_short", *[f"group_{i}" for i in range(1, 11)]]
+    ppy = float(periods_per_year) if periods_per_year else default_periods_per_year()
     output = {}
     for frequency in frequencies:
-        rebalance_dates = _rebalance_dates(dates, frequency)
-        previous = {n: pd.Series(dtype=float) for n in names}
+        rebalance_dates = _rebalance_dates(signal_dates, frequency)
         current = {n: pd.Series(dtype=float) for n in names}
         records = {n: [] for n in names}
         count = 0
-        for date, raw in joined.groupby(level="datetime", sort=True):
-            date, group = pd.Timestamp(date), raw.droplevel("datetime")
-            is_rebalance = date in rebalance_dates
-            if is_rebalance:
-                target = _weights(group, quantile, min_positions)
+        for date in dates:
+            target = {}
+            if date in rebalance_dates and date in scores_by_date:
+                target = _weights(scores_by_date[date], quantile, min_positions)
                 if target:
-                    current.update(target); count += 1
-            returns = group.realized_return
+                    count += 1
+            day = returns_by_date.get(date)
             for name in names:
+                turnover, rebalanced = 0.0, name in target
+                if rebalanced:
+                    turnover = float(target[name].subtract(current[name], fill_value=0).abs().sum())
+                    current[name] = target[name]
                 weight = current[name]
                 if weight.empty:
                     continue
-                turnover = float(weight.subtract(previous[name], fill_value=0).abs().sum()) if is_rebalance else 0.0
-                gross = float((weight * returns.reindex(weight.index).fillna(0)).sum())
+                r, missing = held_returns(weight, day, missing_return)
+                gross = float((weight * r).sum())
                 cost = turnover * transaction_cost
-                borrow = short_borrow_rate / 252.0 * float(weight[weight < 0].abs().sum())
+                exposure = float(weight.abs().sum())
+                borrow = short_borrow_rate / ppy * float(weight[weight < 0].abs().sum())
                 records[name].append({"date": date, "gross_return": gross,
                     "net_return": gross - cost - borrow, "turnover": turnover,
                     "transaction_cost": cost, "borrow_cost": borrow,
-                    "positions": len(weight), "is_rebalance": is_rebalance})
-                if is_rebalance:
-                    previous[name] = weight.copy()
-        portfolios = {n: _summary(records[n], count) for n in ("long", "short", "long_short") if records[n]}
-        deciles = {n: _summary(records[n], count) for n in (f"group_{i}" for i in range(1, 11)) if records[n]}
+                    "positions": len(weight), "is_rebalance": rebalanced,
+                    "missing_return_exposure": missing / exposure if exposure > 0 else 0.0})
+                current[name] = drift_weights(weight, r, gross)
+        portfolios = {n: _summary(records[n], count, ppy) for n in ("long", "short", "long_short") if records[n]}
+        deciles = {n: _summary(records[n], count, ppy) for n in (f"group_{i}" for i in range(1, 11)) if records[n]}
         dr = pd.Series({int(n.split("_")[1]): v["annualized_net_return"] for n, v in deciles.items()})
         output[frequency] = {"portfolio_analytics": portfolios, "decile_analytics": deciles,
             "decile_monotonicity": float(dr.index.to_series().corr(dr, method="spearman")) if len(dr) > 1 else 0.0,

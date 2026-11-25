@@ -28,6 +28,27 @@ FINANCIAL_FIELDS = [
 SW_FIELDS = ["sw_l1", "sw_l2", "sw_l3"]
 
 
+# Listing dates for every stock that ever traded. ts_stock_basic is often
+# downloaded with list_status='L' only, which drops delisted names: they then
+# have no listing date, fail the new-stock filter on every date and vanish
+# from every historical universe. Codes that only appear in ts_daily take
+# their first trade date (an upper bound on the true listing date).
+LISTING_SQL = (
+    "select ts_code, min(list_date) as list_date, bool_and(from_daily) as from_daily from ("
+    " select ts_code, cast(list_date as varchar) as list_date, false as from_daily from ts_stock_basic"
+    " where list_date is not null"
+    " union all"
+    " select ts_code, cast(min(trade_date) as varchar) as list_date, true as from_daily from ts_daily"
+    " group by ts_code"
+    ") where ts_code like '%.SH' or ts_code like '%.SZ' group by ts_code"
+)
+
+
+def _listing_dates(con) -> pd.DataFrame:
+    """ts_code, list_date (YYYYMMDD text), from_daily (True when absent from ts_stock_basic)."""
+    return con.execute(LISTING_SQL).df()
+
+
 def _connect(path: str | Path):
     import duckdb
     return duckdb.connect(str(path), read_only=True)
@@ -77,6 +98,10 @@ def inspect_cn_duckdb(db_path: str | Path) -> dict:
                     if universe != "sme_composite" else "按原中小板002股票及上市日期重建"
                 ),
             }
+        missing_basic = con.execute(
+            "select count(distinct d.ts_code) from ts_daily d "
+            "left join ts_stock_basic s using(ts_code) where s.ts_code is null"
+        ).fetchone()[0]
         st = con.execute(
             "select count(*), count(distinct ts_code), min(trade_date), max(trade_date) from ts_stock_st"
         ).fetchone()
@@ -88,7 +113,10 @@ def inspect_cn_duckdb(db_path: str | Path) -> dict:
             "path": str(path), "sizeGb": round(path.stat().st_size / 1024**3, 2),
             "ready": all(tables.values()), "tables": tables,
             "daily": {"rows": int(price[0]), "stocks": int(price[1]),
-                      "start": _date(price[2]), "end": _date(price[3])},
+                      "start": _date(price[2]), "end": _date(price[3]),
+                      # Delisted names absent from ts_stock_basic; they use
+                      # their first trade date as the listing date.
+                      "notInStockBasic": int(missing_basic)},
             "universes": coverage,
             "stHistory": {"rows": int(st[0]), "stocks": int(st[1]),
                           "start": _date(st[2]), "end": _date(st[3]),
@@ -198,6 +226,9 @@ def _compact_membership(rows: pd.DataFrame, end_date: str) -> list[tuple[str, st
 def _build_universes(con, start_date: str, end_date: str, stock_basic: pd.DataFrame) -> tuple[dict[str, list], dict]:
     output: dict[str, list] = {}
     metadata: dict[str, dict] = {}
+    # Listing dates are computed once (see LISTING_SQL) and reused by every
+    # reconstruction query; a pandas view works on a read-only connection.
+    con.register("listing_dates", stock_basic[["ts_code", "list_date"]])
     for name, code in (("csi300", "000300.SH"), ("csi500", "000905.SH")):
         exact = con.execute(
             "select trade_date as date, con_code from ts_index_weight "
@@ -221,7 +252,7 @@ def _build_universes(con, start_date: str, end_date: str, stock_basic: pd.DataFr
             ranks = con.execute(
                 "select d.ts_code, avg(d.amount) as liquidity, avg(b.total_mv) as total_mv "
                 "from ts_daily d join ts_daily_basic b using(ts_code,trade_date) "
-                "join ts_stock_basic s using(ts_code) "
+                "join listing_dates s using(ts_code) "
                 "where d.trade_date between ? and ? and s.list_date < ? "
                 "and (d.ts_code like '%.SH' or d.ts_code like '%.SZ') "
                 "group by d.ts_code having count(*) >= 100 order by total_mv desc",
@@ -270,10 +301,7 @@ def build_cn_qlib(
         temporary.mkdir(parents=True)
     con = _connect(database)
     try:
-        stock_basic = con.execute(
-            "select ts_code,list_date,market from ts_stock_basic "
-            "where ts_code like '%.SH' or ts_code like '%.SZ'"
-        ).df()
+        stock_basic = _listing_dates(con)
         listing = {str(r.ts_code): pd.to_datetime(str(r.list_date), errors="coerce") for r in stock_basic.itertuples(index=False)}
         financials = _load_fundamentals(con, start_date, end_date)
         industries = _load_sw_memberships(con)
@@ -370,6 +398,11 @@ def build_cn_qlib(
         "source": str(database), "builtAtUtc": pd.Timestamp.utcnow().isoformat(),
         "startDate": start_date, "endDate": end_date, "region": "cn",
         "universes": universe_metadata, "fields": include,
+        "listing": {
+            "stocks": int(len(stock_basic)),
+            "notInStockBasic": int(stock_basic["from_daily"].sum()),
+            "fallback": "first ts_daily trade date for codes missing from ts_stock_basic",
+        },
         "filters": {"stField": "is_st", "newStockAgeField": "listing_age_days", "defaultMinTradingDays": 375},
         "industry": {"primary": "sw_l1", "robustness": "sw_l2", "detail": "sw_l3"},
         "financialTiming": "ann_date backward as-of only",

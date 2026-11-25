@@ -23,8 +23,28 @@ logger = logging.getLogger(__name__)
 
 from quantaalpha.backtest.calendar_guard import clamp_backtest_end_date
 from quantaalpha.backtest.long_short_analytics import (
-    industry_rank_signal, calculate_industry_diagnostics,
+    industry_rank_signal, calculate_industry_diagnostics, default_periods_per_year,
 )
+
+
+def _rank_within_dates_inplace(values: np.ndarray, date_codes: np.ndarray, chunk: int = 16) -> None:
+    """Replace each column with its per-date pct rank minus 0.5, in place.
+
+    Equivalent to ``groupby(date).transform(lambda x: x.rank(pct=True) - 0.5
+    if len(x) > 1 else 0)`` per column (average ties, NaN kept as NaN, single-row
+    dates set to 0), but vectorized and processed a few columns at a time so
+    no full-size float64 temporary is created.
+    """
+    if values.size == 0:
+        return
+    single_row_date = np.bincount(date_codes)[date_codes] <= 1
+    for start in range(0, values.shape[1], chunk):
+        stop = min(start + chunk, values.shape[1])
+        block = pd.DataFrame(values[:, start:stop])
+        ranked = block.groupby(date_codes, sort=False).rank(pct=True).to_numpy(dtype=np.float64)
+        ranked -= 0.5
+        ranked[single_row_date] = 0.0
+        values[:, start:stop] = ranked
 
 
 class BacktestRunner:
@@ -60,6 +80,20 @@ class BacktestRunner:
         self._qlib_initialized = True
         logger.info(f"Qlib initialized: {provider_uri} (region={region})")
 
+    def _enforce_valid_test_gap(self) -> None:
+        """Leave two full sessions between the last validation label and the test start."""
+        from qlib.data import D
+        from quantaalpha.backtest.calendar_guard import enforce_valid_test_gap, VALID_TEST_GAP_SESSIONS
+
+        segments = self.config.get('dataset', {}).get('segments', {})
+        original = list(segments.get('valid') or [])
+        moved = enforce_valid_test_gap(segments, D.calendar(freq='day'))
+        if moved:
+            logger.info(
+                f"Validation end moved {original[1]} -> {moved} to leave "
+                f"{VALID_TEST_GAP_SESSIONS} sessions before the test start {segments['test'][0]}"
+            )
+
     def run(self,
             factor_source: Optional[str] = None,
             factor_json: Optional[List[str]] = None,
@@ -77,6 +111,7 @@ class BacktestRunner:
         """Run full backtest; returns metrics dict."""
         start_time_total = time.time()
         self._init_qlib()
+        self._enforce_valid_test_gap()
         if factor_source:
             self.config['factor_source']['type'] = factor_source
         if factor_json:
@@ -112,6 +147,11 @@ class BacktestRunner:
         correlation_report = {'enabled': False}
         if custom_factors:
             computed_factors = self._compute_custom_factors(custom_factors, skip_compute=skip_uncached)
+            if computed_factors is not None and not computed_factors.empty:
+                # A daily S&P 500 panel is ~4.9M rows x ~150 factors (~5.8 GB in
+                # float64). Every downstream step cross-sectionally ranks the
+                # factors, so float32 is ample and halves each in-memory copy.
+                computed_factors = computed_factors.astype(np.float32)
             n_computed = len(computed_factors.columns) if computed_factors is not None and not computed_factors.empty else 0
             print(f"[2/4] Computed custom factors: {n_computed}")
             if correlation_pruning and n_computed > 1:
@@ -174,6 +214,12 @@ class BacktestRunner:
             logger.debug("[2/4] No custom factors, skip")
 
         dataset = self._create_dataset(factor_expressions, computed_factors)
+        # The dataset holds its own preprocessed copy; release the raw panel
+        # before model training so the two never coexist in memory.
+        n_custom_used = (
+            len(computed_factors.columns) if computed_factors is not None else len(custom_factors)
+        )
+        computed_factors = None
         print("[3/4] Dataset created")
 
         metrics = self._train_and_backtest(
@@ -198,9 +244,7 @@ class BacktestRunner:
         total_time = time.time() - start_time_total
         self._print_results(metrics, total_time)
         self._save_results(metrics, exp_name, factor_source or self.config['factor_source']['type'], 
-                          len(factor_expressions) + (
-                              len(computed_factors.columns) if computed_factors is not None else len(custom_factors)
-                          ), total_time,
+                          len(factor_expressions) + n_custom_used, total_time,
                           output_name=output_name)
         
         return metrics
@@ -329,8 +373,13 @@ class BacktestRunner:
             if qlib_factors is not None and not qlib_factors.empty:
                 all_feature_dfs.append(qlib_factors)
         
-        features_df = pd.concat(all_feature_dfs, axis=1)
-        features_df = features_df.loc[:, ~features_df.columns.duplicated()]
+        if len(all_feature_dfs) == 1:
+            features_df = all_feature_dfs[0]
+        else:
+            features_df = pd.concat(all_feature_dfs, axis=1)
+        del all_feature_dfs
+        if features_df.columns.duplicated().any():
+            features_df = features_df.loc[:, ~features_df.columns.duplicated()]
         logger.debug(f"  Total factor count: {len(features_df.columns)}")
 
         def _normalize_multiindex(df, df_name):
@@ -377,12 +426,15 @@ class BacktestRunner:
                     df.index.get_level_values('datetime'), errors='raise'
                 )
                 instrument_values = df.index.get_level_values('instrument').astype(str)
-                df = df.copy()
+                # Shallow copy: replace the index without duplicating the
+                # (multi-GB) values, and sort only when actually unsorted.
+                df = df.copy(deep=False)
                 df.index = pd.MultiIndex.from_arrays(
                     [datetime_values, instrument_values],
                     names=['datetime', 'instrument'],
                 )
-                df = df.sort_index()
+                if not df.index.is_monotonic_increasing:
+                    df = df.sort_index()
                 logger.debug(
                     f"  {df_name} index normalized to "
                     "(datetime64[ns], string instrument)"
@@ -450,44 +502,78 @@ class BacktestRunner:
             features_df = merged[feature_cols]
             label_df = merged[label_cols]
         else:
-            features_df = features_df.loc[common_index]
-            label_df = label_df.loc[common_index]
-        
+            if not features_df.index.equals(common_index):
+                features_df = features_df.loc[common_index]
+            if not label_df.index.equals(common_index):
+                label_df = label_df.loc[common_index]
+
         logger.debug(f"  Data rows: {len(features_df)}")
         if len(features_df) == 0:
             raise ValueError("No rows after index alignment; cannot run backtest")
-        combined_df = pd.concat([features_df, label_df], axis=1)
-        from qlib.data.dataset.processor import Fillna, ProcessInf, CSRankNorm, DropnaLabel
+        # Preprocess in one float32 buffer instead of concat/fillna/replace/
+        # per-column groupby-lambda/copy, each of which duplicated the whole
+        # multi-GB panel. Semantics are unchanged: NaN/inf features -> 0, then
+        # per-date pct-rank - 0.5 (0 for single-stock dates) on all rows, then
+        # drop rows with a missing label and rank the label the same way.
         feature_cols = list(features_df.columns)
         label_cols = list(label_df.columns)
-        combined_df[feature_cols] = combined_df[feature_cols].fillna(0)
-        combined_df[feature_cols] = combined_df[feature_cols].replace([np.inf, -np.inf], 0)
-        dt_level = combined_df.index.names[0] if combined_df.index.names[0] else 0
-        for col in feature_cols:
-            combined_df[col] = combined_df.groupby(level=dt_level)[col].transform(
-                lambda x: (x.rank(pct=True) - 0.5) if len(x) > 1 else 0
-            )
-        combined_df = combined_df.dropna(subset=label_cols)
-        for col in label_cols:
-            combined_df[col] = combined_df.groupby(level=dt_level)[col].transform(
-                lambda x: (x.rank(pct=True) - 0.5) if len(x) > 1 else 0
-            )
-        
-        logger.debug(f"  Rows after preprocessing: {len(combined_df)}")
-        feature_tuples = [('feature', col) for col in feature_cols]
-        label_tuples = [('label', col) for col in label_cols]
-        
-        combined_df_multi = combined_df.copy()
-        combined_df_multi.columns = pd.MultiIndex.from_tuples(
-            feature_tuples + label_tuples
+        row_index = features_df.index
+        feature_values = features_df.to_numpy(dtype=np.float32, copy=True)
+        del features_df
+        np.nan_to_num(feature_values, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        date_codes = pd.factorize(row_index.get_level_values(0))[0]
+        _rank_within_dates_inplace(feature_values, date_codes)
+
+        label_values = label_df.to_numpy(dtype=np.float64, copy=True)
+        del label_df
+        keep = ~np.isnan(label_values).any(axis=1)
+        if not keep.all():
+            feature_values = feature_values[keep]
+            label_values = label_values[keep]
+            row_index = row_index[keep]
+            date_codes = pd.factorize(row_index.get_level_values(0))[0]
+        _rank_within_dates_inplace(label_values, date_codes)
+
+        logger.debug(f"  Rows after preprocessing: {len(row_index)}")
+        combined_df_multi = pd.DataFrame(
+            feature_values,
+            index=row_index,
+            columns=pd.MultiIndex.from_tuples([('feature', col) for col in feature_cols]),
+            copy=False,
         )
-        
+        del feature_values
+        for position, col in enumerate(label_cols):
+            combined_df_multi[('label', col)] = label_values[:, position]
+        del label_values
+        combined_df = combined_df_multi  # row count for the log line below
+
         class PrecomputedDataHandler(DataHandler):
             """DataHandler for precomputed data."""
             
             def __init__(self, data_df, segments):
                 self._data = data_df
                 self._segments = segments
+                try:
+                    self._dates = data_df.index.get_level_values('datetime')
+                except KeyError:
+                    self._dates = data_df.index.get_level_values(0)
+                self._dates_sorted = bool(self._dates.is_monotonic_increasing)
+
+            def _rows(self, selector):
+                """Rows for a (start, end) selector; a cheap slice when dates are sorted."""
+                data = self._data
+                if isinstance(selector, slice):
+                    if selector.start is None or selector.stop is None:
+                        return data
+                    selector = (selector.start, selector.stop)
+                if not (isinstance(selector, (tuple, list)) and len(selector) == 2):
+                    return data
+                start, end = pd.Timestamp(selector[0]), pd.Timestamp(selector[1])
+                if self._dates_sorted:
+                    lo = self._dates.searchsorted(start, side='left')
+                    hi = self._dates.searchsorted(end, side='right')
+                    return data.iloc[lo:hi]
+                return data.loc[(self._dates >= start) & (self._dates <= end)]
             
             @property
             def data_loader(self):
@@ -502,33 +588,17 @@ class BacktestRunner:
             
             def fetch(self, selector=None, level='datetime', col_set='feature',
                      data_key=None, squeeze=False, proc_func=None):
+                # Select the date segment first (DatasetH passes YAML segments
+                # as two-item lists), then the columns, so only the segment is
+                # ever copied rather than the full multi-decade panel.
+                rows = self._rows(selector) if selector is not None else self._data
                 if col_set in ('feature', 'label'):
-                    result = self._data[col_set].copy()
-                elif col_set == '__all' or col_set is None:
-                    result = self._data.copy()
+                    result = rows[col_set].copy()
+                elif isinstance(col_set, (list, tuple)):
+                    result = rows[list(col_set)].copy()
                 else:
-                    if isinstance(col_set, (list, tuple)):
-                        result = self._data[list(col_set)].copy()
-                    else:
-                        result = self._data.copy()
-                if selector is not None:
-                    try:
-                        dates = result.index.get_level_values('datetime')
-                    except KeyError:
-                        dates = result.index.get_level_values(0)
-                    # DatasetH stores YAML segments as two-item lists and
-                    # passes them straight through to handler.fetch().
-                    if isinstance(selector, (tuple, list)) and len(selector) == 2:
-                        start, end = selector
-                        mask = (dates >= pd.Timestamp(start)) & (dates <= pd.Timestamp(end))
-                        result = result.loc[mask]
-                    elif isinstance(selector, slice):
-                        start = selector.start
-                        end = selector.stop
-                        if start is not None and end is not None:
-                            mask = (dates >= pd.Timestamp(start)) & (dates <= pd.Timestamp(end))
-                            result = result.loc[mask]
-                
+                    result = rows.copy()
+
                 if squeeze and result.shape[1] == 1:
                     result = result.iloc[:, 0]
                 
@@ -666,11 +736,16 @@ class BacktestRunner:
     def _calculate_long_short_analytics(self, pred: pd.Series) -> Dict[str, Dict]:
         """Calculate equal-weight long, short, long-short and score deciles.
 
-        Turnover is gross traded notional: sum(abs(w_t - w_(t-1))). Costs are
-        charged on that notional. The long-short leg uses 50% long and 50%
-        short exposure, for 100% total gross exposure.
+        Uses the shared daily engine in ``long_short_analytics``: names are
+        chosen from the signal alone (never from whether their next return
+        exists), held names earn their realized return even after leaving the
+        index or losing their signal, weights drift between rebalances, and
+        turnover sum(|w_target - w_drifted|) is charged at
+        ``transaction_cost``. The long-short leg is 50% long / 50% short.
         """
         from qlib.data import D
+        from quantaalpha.backtest.long_short_analytics import calculate_multi_frequency_analytics
+        from quantaalpha.market.profile import load_held_returns
 
         ls_config = self.config.get('backtest', {}).get('long_short', {})
         quantile = float(ls_config.get('quantile', 0.1))
@@ -681,111 +756,29 @@ class BacktestRunner:
             raise ValueError(f"long_short.quantile must be in (0, 0.5], got {quantile}")
 
         bt_config = self.config['backtest']['backtest']
-        instruments = D.instruments(self.config['data']['market'])
-        label_expr = self.config['dataset']['label']
-        realized = D.features(
-            instruments,
-            [label_expr],
-            start_time=bt_config['start_time'],
-            end_time=bt_config['end_time'],
-            freq='day',
-        )
-        realized = self._normalize_signal_index(realized, 'realized return').iloc[:, 0]
-        signal = pred if isinstance(pred, pd.Series) else pred.iloc[:, 0]
-        joined = pd.concat(
-            [signal.rename('score'), realized.rename('realized_return')], axis=1, join='inner'
-        ).replace([np.inf, -np.inf], np.nan).dropna()
-
         start = pd.Timestamp(bt_config['start_time'])
         end = pd.Timestamp(bt_config['end_time'])
-        dates = joined.index.get_level_values('datetime')
-        joined = joined[(dates >= start) & (dates <= end)]
-        if joined.empty:
+        realized = load_held_returns(
+            D, self.config['data']['market'], self.config['dataset']['label'],
+            bt_config['start_time'], bt_config['end_time'],
+        )
+        if realized.empty:
             raise ValueError('No prediction/return overlap for long-short analytics')
+        realized = self._normalize_signal_index(realized, 'realized return').iloc[:, 0]
+        signal = pred if isinstance(pred, pd.Series) else pred.iloc[:, 0]
+        signal_dates = signal.index.get_level_values('datetime')
+        signal = signal[(signal_dates >= start) & (signal_dates <= end)]
 
-        previous = {
-            'long': pd.Series(dtype=float),
-            'short': pd.Series(dtype=float),
-            'long_short': pd.Series(dtype=float),
-            **{f'group_{number}': pd.Series(dtype=float) for number in range(1, 11)},
-        }
-        records = {name: [] for name in previous}
-        borrow_daily = short_borrow_rate / 252.0
-
-        for date, group in joined.groupby(level='datetime', sort=True):
-            group = group.droplevel('datetime').sort_values('score')
-            count = min(max(min_positions, int(np.ceil(len(group) * quantile))), len(group) // 2)
-            if count < 1:
-                continue
-            bottom = group.iloc[:count]
-            top = group.iloc[-count:]
-            long_weights = pd.Series(1.0 / count, index=top.index)
-            short_weights = pd.Series(-1.0 / count, index=bottom.index)
-            weights = {
-                'long': long_weights,
-                'short': short_weights,
-                'long_short': pd.concat([long_weights * 0.5, short_weights * 0.5]),
-            }
-            for number, members in enumerate(np.array_split(group.index.to_numpy(), 10), start=1):
-                if len(members) > 0:
-                    weights[f'group_{number}'] = pd.Series(1.0 / len(members), index=members)
-            returns = group['realized_return']
-
-            for name, current in weights.items():
-                delta = current.subtract(previous[name], fill_value=0.0)
-                turnover = float(delta.abs().sum())
-                cost = turnover * transaction_cost
-                gross_return = float((current * returns.reindex(current.index)).sum())
-                borrow_cost = borrow_daily * float(current[current < 0].abs().sum())
-                net_return = gross_return - cost - borrow_cost
-                records[name].append({
-                    'date': pd.Timestamp(date),
-                    'gross_return': gross_return,
-                    'net_return': net_return,
-                    'turnover': turnover,
-                    'transaction_cost': cost,
-                    'borrow_cost': borrow_cost,
-                    'positions': int(len(current)),
-                })
-                previous[name] = current
-
-        def summarize(rows: List[Dict]) -> Dict:
-            frame = pd.DataFrame(rows).set_index('date').sort_index()
-            net = frame['net_return'].clip(lower=-0.999999)
-            gross = frame['gross_return'].clip(lower=-0.999999)
-            net_equity = (1.0 + net).cumprod()
-            gross_equity = (1.0 + gross).cumprod()
-            periods = len(frame)
-
-            def annualized(equity: pd.Series) -> float:
-                return float(equity.iloc[-1] ** (252.0 / periods) - 1.0) if periods else 0.0
-
-            volatility = float(net.std(ddof=1) * np.sqrt(252)) if periods > 1 else 0.0
-            sharpe = float(net.mean() / net.std(ddof=1) * np.sqrt(252)) if periods > 1 and net.std(ddof=1) > 0 else 0.0
-            drawdown = net_equity / net_equity.cummax() - 1.0
-            return {
-                'annualized_gross_return': annualized(gross_equity),
-                'annualized_net_return': annualized(net_equity),
-                'total_net_return': float(net_equity.iloc[-1] - 1.0),
-                'annualized_volatility': volatility,
-                'sharpe_ratio': sharpe,
-                'max_drawdown': float(drawdown.min()),
-                'average_daily_turnover': float(frame['turnover'].mean()),
-                'annualized_turnover': float(frame['turnover'].mean() * 252),
-                'total_transaction_cost': float(frame['transaction_cost'].sum()),
-                'total_borrow_cost': float(frame['borrow_cost'].sum()),
-                'average_positions': float(frame['positions'].mean()),
-                'daily_net_returns': [
-                    {'date': idx.strftime('%Y-%m-%d'), 'value': float(value)}
-                    for idx, value in net.items()
-                ],
-                'curve': [
-                    {'date': idx.strftime('%Y-%m-%d'), 'value': float(value - 1.0)}
-                    for idx, value in net_equity.items()
-                ],
-            }
-
-        return {name: summarize(rows) for name, rows in records.items() if rows}
+        market_mode = self.config.get('data', {}).get('market_mode')
+        ppy = default_periods_per_year(
+            {'MARKET_MODE': market_mode} if market_mode else None
+        )
+        daily = calculate_multi_frequency_analytics(
+            signal, realized, ('day',), quantile=quantile, min_positions=min_positions,
+            transaction_cost=transaction_cost, short_borrow_rate=short_borrow_rate,
+            periods_per_year=ppy,
+        )['day']
+        return {**daily['portfolio_analytics'], **daily['decile_analytics']}
 
     def _train_and_backtest(
         self,

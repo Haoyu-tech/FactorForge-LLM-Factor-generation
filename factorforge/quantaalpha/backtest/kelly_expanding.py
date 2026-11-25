@@ -32,7 +32,8 @@ def _summary(rows: list[dict], periods_per_year: float = 12.0) -> dict:
     annual_net = float(net_curve.iloc[-1] ** (1.0 / years) - 1.0)
     volatility = float(net.std(ddof=1) * math.sqrt(periods_per_year)) if len(net) > 1 else 0.0
     sharpe = float(net.mean() / net.std(ddof=1) * math.sqrt(periods_per_year)) if len(net) > 1 and net.std(ddof=1) > 0 else 0.0
-    drawdown = net_curve / net_curve.cummax() - 1.0
+    # Wealth starts at 1.0, so a first-month loss counts toward drawdown.
+    drawdown = net_curve / np.maximum(net_curve.cummax(), 1.0) - 1.0
     turnover = frame["turnover"]
     return {
         "annualized_gross_return": _finite(annual_gross),
@@ -48,6 +49,8 @@ def _summary(rows: list[dict], periods_per_year: float = 12.0) -> dict:
         "total_borrow_cost": 0.0,
         "average_positions": _finite(frame["positions"].mean()),
         "rebalance_count": int(len(frame)),
+        "missing_return_exposure": _finite(frame["missing_return_exposure"].mean())
+        if "missing_return_exposure" in frame else 0.0,
         "curve": [
             {"date": date.strftime("%Y-%m-%d"), "value": _finite(value - 1.0)}
             for date, value in net_curve.items()
@@ -64,12 +67,22 @@ def portfolio_analytics(
     quantile: float = 0.10,
     min_positions: int = 20,
     transaction_cost: float = 0.0005,
+    missing_return: float = 0.0,
 ) -> tuple[dict, dict]:
+    """Monthly equal-weight long, short, long-short and score deciles.
+
+    Names are chosen from the score alone: a stock whose next-month return
+    turns out to be missing stays in the portfolio and is booked at
+    ``missing_return``. Turnover is measured from the previous month's
+    weights after they drifted with that month's returns.
+    """
+    from quantaalpha.backtest.long_short_analytics import drift_weights, held_returns
+
     names = ["long", "short", "long_short", *[f"group_{number}" for number in range(1, 11)]]
     previous = {name: pd.Series(dtype=float) for name in names}
     rows = {name: [] for name in names}
     for date, group in predictions.groupby("eom", sort=True):
-        group = group.replace([np.inf, -np.inf], np.nan).dropna(subset=["score", "ret_exc_lead1m"])
+        group = group.replace([np.inf, -np.inf], np.nan).dropna(subset=["score"])
         group = group.sort_values("score").set_index("permno")
         count = min(max(min_positions, int(math.ceil(len(group) * quantile))), len(group) // 2)
         if count < 1:
@@ -86,8 +99,10 @@ def portfolio_analytics(
         realized = group["ret_exc_lead1m"]
         for name, weight in weights.items():
             turnover = float(weight.subtract(previous[name], fill_value=0.0).abs().sum())
-            gross = float((weight * realized.reindex(weight.index).fillna(0.0)).sum())
+            returns, missing = held_returns(weight, realized, missing_return)
+            gross = float((weight * returns).sum())
             cost = turnover * transaction_cost
+            exposure = float(weight.abs().sum())
             rows[name].append({
                 "date": pd.Timestamp(date),
                 "gross_return": gross,
@@ -95,8 +110,9 @@ def portfolio_analytics(
                 "turnover": turnover,
                 "transaction_cost": cost,
                 "positions": len(weight),
+                "missing_return_exposure": missing / exposure if exposure > 0 else 0.0,
             })
-            previous[name] = weight.copy()
+            previous[name] = drift_weights(weight, returns, gross)
 
     portfolios = {name: _summary(rows[name]) for name in ("long", "short", "long_short")}
     deciles = {name: _summary(rows[name]) for name in (f"group_{i}" for i in range(1, 11))}
@@ -439,7 +455,10 @@ def run_expanding_backtest(
             "data": {"market": "sp500"},
             "backtest": {
                 "backtest": {"start_time": test_start, "end_time": test_end},
-                "long_short": {"transaction_cost": transaction_cost, "short_borrow_rate": 0.0},
+                # Trade at the month-end close the JKP characteristics use, the
+                # same timing as ret_exc_lead1m in the equal-weight benchmark.
+                "long_short": {"transaction_cost": transaction_cost, "short_borrow_rate": 0.0,
+                               "execution_lag_days": 0},
             },
         }
         optimized, optimization_details = calculate_maxser_pr_analytics(optimized_signal, optimization_config)

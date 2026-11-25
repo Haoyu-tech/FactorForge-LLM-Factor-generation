@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from quantaalpha.backtest.calendar_guard import clamp_backtest_end_date
+from quantaalpha.backtest.calendar_guard import clamp_backtest_end_date, mining_evaluation_split
 
 from rdagent.scenarios.qlib.experiment.workspace import QlibFBWorkspace as _RdagentQlibFBWorkspace
 from rdagent.log import rdagent_logger as logger
@@ -64,11 +64,7 @@ class QlibFBWorkspace(_RdagentQlibFBWorkspace):
             # Qlib writes predictions from the segment named "test". During
             # mining, map that output segment to validation so the true test
             # period cannot enter model or portfolio analytics.
-            evaluation_split = os.environ.get(
-                "MINING_EVALUATION_SPLIT", "valid"
-            ).strip().lower()
-            if evaluation_split not in {"valid", "test"}:
-                evaluation_split = "valid"
+            evaluation_split = mining_evaluation_split()
             evaluation_segment = segments.get(evaluation_split)
             if isinstance(evaluation_segment, list) and len(evaluation_segment) == 2:
                 segments["test"] = list(evaluation_segment)

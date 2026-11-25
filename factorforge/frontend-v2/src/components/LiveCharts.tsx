@@ -87,8 +87,8 @@ export const LiveCharts: React.FC<LiveChartsProps> = ({
     }
   };
 
-  const StatCard = ({ icon: Icon, label, value, trend, color }: any) => (
-    <div className="glass rounded-xl p-4 card-hover h-[140px] flex flex-col justify-between">
+  const StatCard = ({ icon: Icon, label, value, trend, color, note, title }: any) => (
+    <div className="glass rounded-xl p-4 card-hover h-[140px] flex flex-col justify-between" title={title}>
       <div className="flex items-start justify-between mb-2">
         <div className={`p-2 rounded-lg ${color} bg-opacity-20`}>
           <Icon className={`h-5 w-5 ${color}`} />
@@ -98,11 +98,23 @@ export const LiveCharts: React.FC<LiveChartsProps> = ({
             {trend > 0 ? '+' : ''}{formatPercent(trend, 1)}
           </Badge>
         )}
+        {note && <span className="text-[11px] text-muted-foreground font-mono">{note}</span>}
       </div>
       <div className="text-xs text-muted-foreground mb-1">{label}</div>
       <div className="text-2xl font-bold">{value}</div>
     </div>
   );
+
+  // The headline figures are the best factor's net, annualized statistics for
+  // one portfolio leg: long–short for US/crypto, long-only for A-shares. The
+  // Top 10 table shows every leg, so name the leg here or the two disagree.
+  const bestRow = metrics?.top10Factors?.find((f) => f.factorName === metrics?.factorName)
+    ?? metrics?.top10Factors?.[0];
+  const bestLeg = metrics?.bestFactorLeg ?? bestRow?.preferredPortfolioLeg ?? 'long_short';
+  const legLabel = bestLeg === 'long' ? '多头' : '多空';
+  const longReturn = metrics?.bestFactorLongReturn ?? bestRow?.portfolioStats?.long?.annualizedNetReturn;
+  const shortName = metrics?.factorName ? metrics.factorName.split('_').slice(0, 2).join('_') : '';
+  const legTitle = `${metrics?.factorName ?? '最佳因子'}：${legLabel}组合，扣除交易成本后的年化统计`;
 
   return (
     <div className="space-y-4">
@@ -111,9 +123,10 @@ export const LiveCharts: React.FC<LiveChartsProps> = ({
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-in-up">
           <StatCard
             icon={TrendingUp}
-            label={metrics.factorName ? `最佳因子年化收益 (${metrics.factorName.split('_').slice(0,2).join('_')}...)` : "最佳因子年化收益"}
+            label={`最佳因子${legLabel}年化收益（净）${shortName ? ` · ${shortName}...` : ''}`}
             value={formatPercent(metrics.annualReturn)}
-            trend={metrics.annualReturn}
+            note={bestLeg === 'long_short' && longReturn != null ? `多头 ${formatPercent(longReturn)}` : undefined}
+            title={legTitle}
             color="text-success"
           />
           <StatCard
@@ -124,15 +137,16 @@ export const LiveCharts: React.FC<LiveChartsProps> = ({
           />
           <StatCard
             icon={BarChart3}
-            label="最佳因子夏普比率"
+            label={`最佳因子${legLabel}夏普比率`}
             value={formatNumber(metrics.sharpeRatio, 2)}
+            title={legTitle}
             color="text-warning"
           />
           <StatCard
             icon={Target}
-            label="最佳因子最大回撤"
+            label={`最佳因子${legLabel}最大回撤`}
             value={formatPercent(metrics.maxDrawdown)}
-            trend={metrics.maxDrawdown}
+            title={legTitle}
             color="text-destructive"
           />
         </div>

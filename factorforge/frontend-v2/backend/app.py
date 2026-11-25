@@ -12,9 +12,11 @@ import hashlib
 import json
 import math
 import os
+import re
 import signal
 import subprocess
 import sys
+from urllib.parse import urlparse
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -217,6 +219,132 @@ def _gen_id() -> str:
 
 def _now() -> str:
     return datetime.now().isoformat()
+
+
+# Emitted once per LLM call by quantaalpha.llm.client._report_token_usage.
+_LLM_USAGE_MARKER = "[LLM_USAGE]"
+# "Running task: phase=original, round=0, ..." (sequential) and
+# "Parallel phase: phase=original, round=0, ..." (parallel); round is 0-based.
+_ROUND_PATTERN = re.compile(r"(?:Running task|Parallel phase): phase=\w+, round=(\d+)")
+
+
+def _empty_usage() -> Dict[str, Any]:
+    return {
+        "promptTokens": 0, "completionTokens": 0, "totalTokens": 0, "calls": 0,
+        "costUsd": None,
+        # Per-model breakdown: a run can touch a chat model and an embedding
+        # model with different prices and different transports.
+        "byModel": [],
+    }
+
+
+def _coerce_cost(value: Any) -> Optional[float]:
+    """A reported cost, or None when the provider reported none.
+
+    None and 0.0 are different: a free call cost nothing, while "no cost
+    reported" means there is nothing to show and nothing to add to a total.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _record_llm_usage(task: Dict[str, Any], line: str) -> bool:
+    """Add one ``[LLM_USAGE] {json}`` line to the task's totals and its per-model rows."""
+    try:
+        record = json.loads(line.split(_LLM_USAGE_MARKER, 1)[1].strip())
+        prompt = int(record.get("prompt") or 0)
+        completion = int(record.get("completion") or 0)
+    except (ValueError, TypeError, IndexError, AttributeError):
+        return False
+    cost = _coerce_cost(record.get("costUsd"))
+
+    usage = task.setdefault("usage", _empty_usage())
+    usage["promptTokens"] += prompt
+    usage["completionTokens"] += completion
+    usage["totalTokens"] += prompt + completion
+    usage["calls"] += 1
+    if cost is not None:
+        usage["costUsd"] = (usage.get("costUsd") or 0.0) + cost
+
+    # Attribute to the model that served the call and how it was reached. Rows
+    # stay separate per transport: the same model billed through an API is not
+    # the same spend as one answered by a local CLI subscription.
+    model = str(record.get("model") or "").strip() or "unknown"
+    source = str(record.get("source") or "").strip()
+    transport = str(record.get("transport") or "other").strip() or "other"
+    rows = usage.setdefault("byModel", [])
+    row = next((r for r in rows if r.get("model") == model and r.get("source") == source), None)
+    if row is None:
+        row = {
+            "model": model, "source": source, "transport": transport,
+            "promptTokens": 0, "completionTokens": 0, "totalTokens": 0,
+            "calls": 0, "costUsd": None,
+        }
+        rows.append(row)
+    row["promptTokens"] += prompt
+    row["completionTokens"] += completion
+    row["totalTokens"] += prompt + completion
+    row["calls"] += 1
+    if cost is not None:
+        row["costUsd"] = (row["costUsd"] or 0.0) + cost
+    rows.sort(key=lambda r: r["totalTokens"], reverse=True)
+    return True
+
+
+def _describe_llm_channel(dotenv: Dict[str, str]) -> Dict[str, Any]:
+    """Describe how this run will reach its LLM, from configuration.
+
+    Recorded when the run launches rather than derived from usage lines, so the
+    channel is visible from the first second, survives a run that makes no
+    successful call, and does not depend on parsing subprocess stdout.
+    """
+    def enabled(key: str) -> bool:
+        return str(dotenv.get(key, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+    if enabled("USE_CLAUDE_CLI"):
+        return {
+            "channel": "claude_cli",
+            "transport": "cli",
+            "label": "本地 Claude CLI",
+            "model": (dotenv.get("CLAUDE_CLI_MODEL") or "").strip() or "default",
+            "endpoint": None,
+        }
+    if enabled("USE_CODEX_CLI"):
+        return {
+            "channel": "codex_cli",
+            "transport": "cli",
+            "label": "本地 Codex CLI",
+            "model": (dotenv.get("CODEX_CLI_MODEL") or "").strip() or "default",
+            "endpoint": None,
+        }
+    base = (dotenv.get("OPENAI_BASE_URL") or "").strip()
+    host = None
+    if base:
+        try:
+            host = urlparse(base if "//" in base else f"//{base}").hostname
+        except ValueError:
+            host = None
+    return {
+        "channel": "openai_api",
+        "transport": "api",
+        "label": "OpenAI 兼容 API",
+        "model": (dotenv.get("CHAT_MODEL") or "").strip() or "default",
+        "endpoint": host,
+    }
+
+
+def _mark_task_finished(task: Dict[str, Any]) -> None:
+    """Stamp when a run ended and how long it took; first call wins."""
+    if task.get("completedAt"):
+        return
+    finished = datetime.now()
+    task["completedAt"] = finished.isoformat()
+    try:
+        started = datetime.fromisoformat(task.get("createdAt", ""))
+        task["durationSeconds"] = round((finished - started).total_seconds(), 1)
+    except (TypeError, ValueError):
+        task["durationSeconds"] = None
 
 
 def _total_memory_gib() -> float:
@@ -656,6 +784,9 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
             )
             if path
         )
+        # Record which LLM channel this run uses, before anything is called.
+        task["llm"] = _describe_llm_channel(dotenv)
+
         if str(dotenv.get("USE_CLAUDE_CLI", "")).lower() in {"1", "true", "yes", "on"}:
             env["USE_CLAUDE_CLI"] = "true"
             env["USE_CODEX_CLI"] = "false"
@@ -863,6 +994,14 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
             "--config_path", config_path_to_use,
         ]
 
+        # A stop during setup must not be overwritten back to "running".
+        if task.get("cancelRequested"):
+            task["status"] = "cancelled"
+            task["progress"]["message"] = "实验已在启动前取消"
+            _mark_task_finished(task)
+            task["updatedAt"] = _now()
+            return
+
         task["status"] = "running"
         task["progress"]["phase"] = "planning"
         task["progress"]["message"] = "正在启动实验..."
@@ -884,6 +1023,22 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
             env=env,
         )
         task["pid"] = proc.pid
+
+        # The spawn is a suspension point, so a stop can land while it runs,
+        # when cancel_mining still sees pid=None. Honour it now that there is a
+        # process to kill.
+        if task.get("cancelRequested"):
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+            await proc.wait()
+            task["pid"] = None
+            task["status"] = "cancelled"
+            task["progress"]["message"] = "实验已在启动时取消"
+            _mark_task_finished(task)
+            task["updatedAt"] = _now()
+            return
 
         # Stream stdout line by line
         line_count = 0
@@ -913,6 +1068,35 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
             # Skip noisy warnings
             if any(p in line for p in _MINING_NOISE):
                 continue
+
+            # Per-call token usage emitted by quantaalpha.llm.client. Summed
+            # into the task, never shown as a log line.
+            if _LLM_USAGE_MARKER in line:
+                if _record_llm_usage(task, line):
+                    await _broadcast(task_id, {
+                        "type": "usage",
+                        "taskId": task_id,
+                        "data": task["usage"],
+                        "timestamp": _now(),
+                    })
+                continue
+
+            # Round progress. The miner logs 0-based round indices; the UI
+            # shows the 1-based round being worked on.
+            round_match = _ROUND_PATTERN.search(line)
+            if round_match:
+                total_rounds = max(int(task["progress"].get("totalRounds") or 0), 1)
+                round_idx = min(int(round_match.group(1)), total_rounds - 1)
+                if round_idx + 1 != task["progress"].get("currentRound"):
+                    task["progress"]["currentRound"] = round_idx + 1
+                    task["progress"]["progress"] = round(100 * round_idx / total_rounds, 1)
+                    task["progress"]["timestamp"] = _now()
+                    await _broadcast(task_id, {
+                        "type": "progress",
+                        "taskId": task_id,
+                        "data": task["progress"],
+                        "timestamp": _now(),
+                    })
 
             # Detect phase from log messages
             new_phase = current_phase
@@ -997,15 +1181,20 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         exit_code = await proc.wait()
         task["pid"] = None
 
-        if exit_code == 0:
+        if task.get("status") == "cancelled":
+            pass  # cancel_mining already finalised status and completedAt
+        elif exit_code == 0:
             task["status"] = "completed"
             task["progress"]["phase"] = "completed"
             task["progress"]["progress"] = 100
+            # Every configured round has run, so the counter reads N/N.
+            task["progress"]["currentRound"] = task["progress"].get("totalRounds") or 0
             task["progress"]["message"] = "实验完成"
         else:
             task["status"] = "failed"
             task["progress"]["message"] = f"实验失败 (exit code: {exit_code})"
 
+        _mark_task_finished(task)
         task["updatedAt"] = _now()
 
         # Load final factor count from the library JSON
@@ -1022,6 +1211,7 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
     except Exception as e:
         task["status"] = "failed"
         task["progress"]["message"] = f"Error: {str(e)}"
+        _mark_task_finished(task)
         task["updatedAt"] = _now()
         await _broadcast(task_id, {
             "type": "error",
@@ -1080,6 +1270,29 @@ async def health_check():
 @app.post("/api/v1/mining/start", response_model=ApiResponse)
 async def start_mining(req: MiningStartRequest):
     """Start a new factor mining experiment."""
+    # One run at a time. Two pipelines read-modify-write the same
+    # data/factorlib/all_factors_library_*.json, so a concurrent start loses
+    # factors; it also defeats the held-out test lock and the low-memory path
+    # that serialises directions. Starting a second run from another browser is
+    # how two browsers ended up reporting conflicting progress.
+    # `tasks` also holds backtest runs, which read the library rather than
+    # rewriting it; only another mining run is a reason to refuse.
+    active = next(
+        (
+            t for t in tasks.values()
+            if t.get("type") != "backtest" and t.get("status") in {"pending", "running"}
+        ),
+        None,
+    )
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"已有挖掘任务在运行（#{active['taskId']}），"
+                "请等待其完成或先停止该任务后再启动新的挖掘。"
+            ),
+        )
+
     try:
         ordered_dates = [
             datetime.fromisoformat(req.trainStartDate),
@@ -1136,7 +1349,10 @@ async def start_mining(req: MiningStartRequest):
         },
         "result": None,
         "pid": None,
+        "usage": _empty_usage(),
         "createdAt": _now(),
+        "completedAt": None,
+        "durationSeconds": None,
         "updatedAt": _now(),
     }
     if resource_note:
@@ -1167,6 +1383,12 @@ async def cancel_mining(task_id: str):
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="Task not found")
     task = tasks[task_id]
+    # Stop can arrive before the subprocess exists: start_mining answers as soon
+    # as the task is registered, while _run_mining still has its setup to do, so
+    # there may be no pid to signal yet. Record the request on the task and let
+    # _run_mining honour it, otherwise the stop is silently lost and the
+    # pipeline runs on untracked.
+    task["cancelRequested"] = True
     if task.get("pid"):
         try:
             pid = task["pid"]
@@ -1190,6 +1412,7 @@ async def cancel_mining(task_id: str):
         except ProcessLookupError:
             pass
     task["status"] = "cancelled"
+    _mark_task_finished(task)
     task["updatedAt"] = _now()
     await _broadcast(task_id, {
         "type": "result",
@@ -1999,12 +2222,30 @@ async def cancel_backtest(task_id: str):
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="Task not found")
     task = tasks[task_id]
+    # As in cancel_mining: the stop can arrive before the subprocess exists.
+    task["cancelRequested"] = True
     if task.get("pid"):
+        pid = task["pid"]
         try:
-            os.kill(task["pid"], signal.SIGTERM)
+            os.kill(pid, signal.SIGTERM)
+            # Give it a moment, then make sure it is really gone. Without this
+            # a backtest that ignores SIGTERM stays alive behind a UI that
+            # already reports it as cancelled.
+            for _ in range(5):
+                try:
+                    os.kill(pid, 0)
+                    await asyncio.sleep(0.1)
+                except ProcessLookupError:
+                    break
+            try:
+                os.kill(pid, 0)
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         except ProcessLookupError:
             pass
     task["status"] = "cancelled"
+    _mark_task_finished(task)
     task["updatedAt"] = _now()
     await _broadcast(task_id, {
         "type": "result",
@@ -2070,9 +2311,16 @@ async def _run_backtest(task_id: str, req: BacktestStartRequest, config_path: st
         else:
             provider = dotenv.get("WRDS_QLIB_DATA_DIR") if source == "wrds" else dotenv.get("QLIB_DATA_DIR")
             effective_config.setdefault("data", {}).update({"region": "us", "market": "sp500"})
-            effective_config.setdefault("dataset", {})["label"] = "Ref($ret_total, -1)"
+            # Skip one session (trade at the close of t+1), like CN/crypto.
+            effective_config.setdefault("dataset", {})["label"] = "Ref($ret_total, -2)"
         if provider:
             effective_config.setdefault("data", {})["provider_uri"] = provider
+            # runner.py and custom_factor_calculator.py prefer QLIB_DATA_DIR /
+            # QLIB_PROVIDER_URI over the YAML provider, so the market-specific
+            # provider must also win in the subprocess env; otherwise the
+            # generic .env value (e.g. cn_data) silently overrides WRDS.
+            env["QLIB_DATA_DIR"] = provider
+            env["QLIB_PROVIDER_URI"] = provider
         date_prefix = "CRYPTO" if market_mode == "crypto" else ("CN" if market_mode == "cn" else "US")
 
         def market_date(key: str) -> Optional[str]:
@@ -2098,7 +2346,13 @@ async def _run_backtest(task_id: str, req: BacktestStartRequest, config_path: st
             effective_config.setdefault("data", {})["end_time"] = test_segment[1]
             effective_config.setdefault("backtest", {}).setdefault("backtest", {})["start_time"] = test_segment[0]
             effective_config.setdefault("backtest", {}).setdefault("backtest", {})["end_time"] = test_segment[1]
-        override_dir = Path(dotenv.get("DATA_RESULTS_DIR", str(PROJECT_ROOT / "data" / "results"))) / "backtest_overrides"
+        # The backtest subprocess runs with cwd=PROJECT_ROOT while this server
+        # may run from frontend-v2/, so a relative DATA_RESULTS_DIR must be
+        # anchored at the project root or the child cannot find the override.
+        results_base = Path(dotenv.get("DATA_RESULTS_DIR", str(PROJECT_ROOT / "data" / "results")))
+        if not results_base.is_absolute():
+            results_base = PROJECT_ROOT / results_base
+        override_dir = results_base / "backtest_overrides"
         override_dir.mkdir(parents=True, exist_ok=True)
         override_path = override_dir / f"{task_id}.yaml"
         temporary_config_path = override_path
@@ -2231,6 +2485,19 @@ async def _run_backtest(task_id: str, req: BacktestStartRequest, config_path: st
             env=env,
         )
         task["pid"] = proc.pid
+
+        # A stop during the spawn found no pid to signal; honour it here.
+        if task.get("cancelRequested"):
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+            await proc.wait()
+            task["pid"] = None
+            task["status"] = "cancelled"
+            _mark_task_finished(task)
+            task["updatedAt"] = _now()
+            return
 
         # Noisy warnings from Qlib / dependencies that can be safely suppressed
         _NOISY_PATTERNS = (
@@ -2601,6 +2868,156 @@ async def get_crypto_build(task_id: str):
     return ApiResponse(success=True, data={"task": task})
 
 
+# ---- Deep-learning benchmark models (LSTM / Transformer) ----
+
+class BenchmarkRunRequest(BaseModel):
+    models: List[str] = Field(default_factory=lambda: ["lstm", "transformer"])
+    market: Optional[str] = None
+
+
+def _benchmark_dir(market: str) -> Path:
+    dotenv = _load_dotenv_dict()
+    base = Path(dotenv.get("DATA_RESULTS_DIR", str(PROJECT_ROOT / "data" / "results")))
+    if not base.is_absolute():
+        base = PROJECT_ROOT / base
+    return base / "benchmarks" / market
+
+
+def _torch_available() -> bool:
+    import importlib.util
+    return importlib.util.find_spec("torch") is not None
+
+
+@app.get("/api/v1/benchmarks/models", response_model=ApiResponse)
+async def get_benchmark_models(market: Optional[str] = None):
+    """Benchmark model results computed by quantaalpha.backtest.dl_baselines, plus the
+    live metric definitions so the UI can show the formula next to every number."""
+    from quantaalpha.backtest.dl_baselines import MODEL_SPECS
+    from quantaalpha.backtest.metric_definitions import metric_definitions_payload
+
+    dotenv = _load_dotenv_dict()
+    market = market or dotenv.get("DEFAULT_MARKET", "sp500")
+    folder = _benchmark_dir(market)
+    models: List[Dict[str, Any]] = []
+    if folder.exists():
+        for path in sorted(folder.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            payload["file"] = str(path)
+            models.append(payload)
+    running = [
+        {"taskId": tid, "status": t.get("status"), "progress": t.get("progress")}
+        for tid, t in tasks.items()
+        if t.get("type") == "benchmark_run" and t.get("status") == "running"
+    ]
+    return ApiResponse(success=True, data={
+        "market": market,
+        "models": models,
+        "definitions": metric_definitions_payload(),
+        "normalization": {
+            "formula": "norm_k(x) = (x - min_k) / (max_k - min_k)",
+            "description": "Per axis k, min and max are taken over every series displayed on the radar; "
+                           "drawdown is plotted as -|MDD| so that larger is better on every axis.",
+        },
+        "available_models": [{"id": key, "label": spec["label"], "implementation": f"{spec['module']}.{spec['class']}"}
+                             for key, spec in MODEL_SPECS.items()],
+        "torch_available": _torch_available(),
+        "running": running,
+    })
+
+
+async def _run_benchmark_models(task_id: str, req: BenchmarkRunRequest, market: str):
+    task = tasks[task_id]
+    try:
+        cmd = [sys.executable, "-m", "quantaalpha.backtest.dl_baselines", "--models", *req.models, "--market", market]
+        env = os.environ.copy()
+        env.update({k: v for k, v in _load_dotenv_dict().items() if k not in env})
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            cwd=str(PROJECT_ROOT), env=env,
+        )
+        task["pid"] = proc.pid
+        while True:
+            line_bytes = await proc.stdout.readline()
+            if not line_bytes:
+                break
+            line = line_bytes.decode("utf-8", errors="replace").rstrip()
+            if not line or "Warning" in line or "warn" in line.lower():
+                continue
+            entry = {"id": _gen_id(), "timestamp": _now(), "level": "error" if "Error" in line else "info",
+                     "message": line[:500]}
+            task["logs"].append(entry)
+            task["logs"] = task["logs"][-2000:]
+            if line.startswith("["):
+                task["progress"]["message"] = line[:200]
+                task["progress"]["progress"] = {"[1/3]": 10, "[2/3]": 40, "[3/3]": 90}.get(line[:5], task["progress"]["progress"])
+                task["progress"]["timestamp"] = _now()
+        exit_code = await proc.wait()
+        task["pid"] = None
+        task["status"] = "completed" if exit_code == 0 else "failed"
+        task["progress"].update({"phase": task["status"], "progress": 100 if exit_code == 0 else task["progress"]["progress"],
+                                 "message": "基准模型评估完成" if exit_code == 0 else f"基准模型评估失败（退出码 {exit_code}）"})
+    except Exception as error:
+        task["pid"] = None
+        task["status"] = "failed"
+        task["progress"].update({"phase": "failed", "message": str(error)})
+    task["updatedAt"] = _now()
+
+
+@app.post("/api/v1/benchmarks/run", response_model=ApiResponse)
+async def start_benchmark_models(req: BenchmarkRunRequest):
+    from quantaalpha.backtest.dl_baselines import MODEL_SPECS
+
+    unknown = [m for m in req.models if m not in MODEL_SPECS]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown benchmark model(s): {', '.join(unknown)}")
+    if not _torch_available():
+        raise HTTPException(status_code=409, detail="PyTorch is not installed in the backend environment.")
+    if any(t.get("type") == "benchmark_run" and t.get("status") == "running" for t in tasks.values()):
+        raise HTTPException(status_code=409, detail="A benchmark run is already in progress.")
+    dotenv = _load_dotenv_dict()
+    market = req.market or dotenv.get("DEFAULT_MARKET", "sp500")
+    task_id = _gen_id()
+    task = {
+        "taskId": task_id, "status": "running", "type": "benchmark_run",
+        "config": {"models": req.models, "market": market},
+        "progress": {"phase": "training", "currentRound": 0, "totalRounds": len(req.models),
+                     "progress": 1, "message": "准备基准模型训练...", "timestamp": _now()},
+        "logs": [], "metrics": {}, "result": None, "pid": None,
+        "createdAt": _now(), "updatedAt": _now(),
+    }
+    tasks[task_id] = task
+    asyncio.create_task(_run_benchmark_models(task_id, req, market))
+    return ApiResponse(success=True, data={"taskId": task_id, "task": task})
+
+
+@app.get("/api/v1/benchmarks/run/{task_id}", response_model=ApiResponse)
+async def get_benchmark_run(task_id: str):
+    task = tasks.get(task_id)
+    if task is None or task.get("type") != "benchmark_run":
+        raise HTTPException(status_code=404, detail="Benchmark run not found")
+    return ApiResponse(success=True, data={"task": task})
+
+
+@app.delete("/api/v1/benchmarks/run/{task_id}", response_model=ApiResponse)
+async def cancel_benchmark_run(task_id: str):
+    task = tasks.get(task_id)
+    if task is None or task.get("type") != "benchmark_run":
+        raise HTTPException(status_code=404, detail="Benchmark run not found")
+    pid = task.get("pid")
+    if task.get("status") == "running" and pid:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        task["status"] = "cancelled"
+        task["progress"].update({"phase": "cancelled", "message": "基准模型训练已取消"})
+        task["updatedAt"] = _now()
+    return ApiResponse(success=True, data={"task": task})
+
+
 # ---- System config endpoints ----
 
 @app.get("/api/v1/system/config", response_model=ApiResponse)
@@ -2885,6 +3302,12 @@ def _update_mining_metrics(task: Dict[str, Any]):
             task["metrics"]["sharpeRatio"] = best["sharpeRatio"]
             task["metrics"]["maxDrawdown"] = best["maxDrawdown"]
             task["metrics"]["factorName"] = best["factorName"]
+            # annualReturn above is this leg's net annualized return (L–S for
+            # US/crypto, long-only for A-shares); the UI labels it accordingly.
+            task["metrics"]["bestFactorLeg"] = best.get("preferredPortfolioLeg")
+            task["metrics"]["bestFactorLongReturn"] = (
+                (best.get("portfolioStats") or {}).get("long", {}).get("annualizedNetReturn")
+            )
             
             # 3. Top 10 Factors
             task["metrics"]["top10Factors"] = factor_list[:10]

@@ -6,15 +6,18 @@ import type { PageId } from '@/components/layout/Layout';
 import { useTaskContext } from '@/context/TaskContext';
 import { useLanguage } from '@/context/LanguageContext';
 import { getSystemConfig } from '@/services/api';
+import { displayRound, formatDuration, formatTokens, hasUsage, useRunTiming } from '@/utils/runInfo';
 
 interface HomePageProps {
   onNavigate?: (page: PageId) => void;
 }
 
 export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
-  const { backendAvailable, miningTask: task, startMining, stopMining } = useTaskContext();
+  const { backendAvailable, miningTask: task, startMining, stopMining, miningStartError } = useTaskContext();
   const { language } = useLanguage();
   const isZh = language === 'zh';
+  const timing = useRunTiming(task);
+  const round = task ? displayRound(task.progress, task.status) : null;
   const [systemInfo, setSystemInfo] = useState({
     train: '1987-01-01 ～ 2004-12-31',
     valid: '2005-01-03 ～ 2014-12-31',
@@ -98,6 +101,50 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                 {isZh ? '训练 / 验证 / 测试严格隔离' : 'Strict train / validation / test isolation'}
               </span>
             </div>
+            {task && (
+              <button
+                type="button"
+                onClick={() => onNavigate?.('mining_dashboard')}
+                className={`group mt-5 inline-flex w-full max-w-2xl items-center justify-between gap-4 rounded-2xl border px-4 py-3 text-left text-sm transition-all hover:-translate-y-0.5 ${
+                  task.status === 'running'
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-900 shadow-[0_10px_30px_rgba(15,118,110,.12)]'
+                    : task.status === 'failed'
+                      ? 'border-rose-200 bg-rose-50 text-rose-900'
+                      : 'border-slate-200 bg-white text-slate-700'
+                }`}
+              >
+                <span className="flex items-center gap-3">
+                  <span className={`h-2.5 w-2.5 rounded-full ${task.status === 'running' ? 'animate-pulse bg-emerald-500' : task.status === 'failed' ? 'bg-rose-500' : 'bg-slate-400'}`} />
+                  <span>
+                    <span className="font-semibold">
+                      {task.status === 'running'
+                        ? (isZh ? '挖掘任务运行中' : 'Mining job running')
+                        : task.status === 'completed'
+                          ? (isZh ? '上次挖掘已完成' : 'Last mining job completed')
+                          : task.status === 'failed'
+                            ? (isZh ? '上次挖掘失败' : 'Last mining job failed')
+                            : (isZh ? '挖掘任务已停止' : 'Mining job stopped')}
+                    </span>
+                    <span className="ml-2 font-mono text-xs opacity-70">
+                      #{task.taskId.slice(0, 8)}
+                      {round && round.total
+                        ? ` · ${isZh ? '第' : 'round '}${round.current}/${round.total}${isZh ? ' 轮' : ''}`
+                        : ''}
+                      {/* The phase is redundant once the run has ended. */}
+                      {task.status === 'running' && task.progress?.phase ? ` · ${task.progress.phase}` : ''}
+                      {timing.seconds != null
+                        ? ` · ${timing.isFinished ? (isZh ? '耗时 ' : 'took ') : (isZh ? '已运行 ' : 'elapsed ')}${formatDuration(timing.seconds)}`
+                        : ''}
+                      {hasUsage(task.usage) ? ` · ${formatTokens(task.usage.totalTokens)} tokens` : ''}
+                    </span>
+                  </span>
+                </span>
+                <span className="inline-flex shrink-0 items-center gap-1 font-semibold">
+                  {isZh ? '打开仪表盘' : 'Open dashboard'}
+                  <ArrowUpRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                </span>
+              </button>
+            )}
           </div>
 
           <aside className="relative overflow-hidden rounded-[28px] border border-white/10 bg-[#071b24] p-7 text-white shadow-[0_30px_80px_rgba(7,27,36,.20)] sm:p-8">
@@ -158,7 +205,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
         </div>
       </section>
 
-      <ChatInput onSubmit={startMining} onStop={stopMining} isRunning={task?.status === 'running'} />
+      <ChatInput onSubmit={startMining} onStop={stopMining} isRunning={task?.status === 'running'} startError={miningStartError} />
     </Layout>
   );
 };

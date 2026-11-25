@@ -60,6 +60,21 @@ def qlib_region(profile: MarketProfile):
     return REG_CN if profile.region == "cn" else REG_US
 
 
+def load_held_returns(D, market: str, expression: str, start_time, end_time) -> pd.DataFrame:
+    """Load ``expression`` for every name that was ever in ``market``, on all dates.
+
+    A universe's instrument file stops a name's rows at its exit date. A
+    portfolio still holds that name until the next rebalance, so realized
+    returns must not be clipped to index membership.
+    """
+    members = D.list_instruments(D.instruments(market), start_time=start_time,
+                                 end_time=end_time, as_list=True)
+    if not members:
+        return pd.DataFrame()
+    return D.features(sorted(members), [expression], start_time=start_time,
+                      end_time=end_time, freq="day")
+
+
 def eligibility_fields(profile: MarketProfile) -> list[str]:
     if profile.mode == "cn":
         return ["$is_st", "$listing_age_days"]
@@ -99,9 +114,11 @@ def apply_market_eligibility(signal, frame, environment: dict[str, str] | None =
         if profile.mode == "crypto" and "listing_age_days" in frame:
             minimum = float(env.get("CRYPTO_MIN_LISTING_DAYS", "90"))
             result = result.where(frame["listing_age_days"].reindex(result.index) >= minimum)
-    if str(env.get("CN_EXCLUDE_ST", "true")).lower() in {"1", "true", "yes", "on"} and "is_st" in frame:
+    # The A-share ST and new-stock rules must not also apply to crypto
+    # contracts; crypto frames carry the same listing_age_days field.
+    if profile.mode == "cn" and str(env.get("CN_EXCLUDE_ST", "true")).lower() in {"1", "true", "yes", "on"} and "is_st" in frame:
         result = result.where(frame["is_st"].reindex(result.index).fillna(0) < 0.5)
-    if str(env.get("CN_EXCLUDE_NEW_STOCKS", "true")).lower() in {"1", "true", "yes", "on"} and "listing_age_days" in frame:
+    if profile.mode == "cn" and str(env.get("CN_EXCLUDE_NEW_STOCKS", "true")).lower() in {"1", "true", "yes", "on"} and "listing_age_days" in frame:
         minimum = float(env.get("CN_NEW_STOCK_MIN_TRADING_DAYS", "375"))
         result = result.where(frame["listing_age_days"].reindex(result.index) >= minimum)
     instruments = result.index.get_level_values("instrument").astype(str).str.upper()
@@ -114,3 +131,56 @@ def apply_market_eligibility(signal, frame, environment: dict[str, str] | None =
         if str(env.get(key, "false")).lower() in {"1", "true", "yes", "on"}:
             result = result.where(~np.asarray(board_mask))
     return result
+
+
+def describe_evaluation_protocol(environment: dict[str, str] | None = None) -> str:
+    """State, in plain words, how the mining loop scores a candidate factor.
+
+    The text is shown to the LLM. It mirrors the settings read by
+    ``QlibFactorRunner.develop`` (single-factor mode) so that hypotheses are
+    written for the test they will actually face. Keep the two in step.
+    """
+    env = os.environ if environment is None else environment
+    profile = get_market_profile(env)
+
+    def number(name: str, default: float) -> float:
+        try:
+            return float(str(env.get(name, default)).strip())
+        except (TypeError, ValueError):
+            return float(default)
+
+    split = str(env.get("MINING_EVALUATION_SPLIT", "valid")).strip().lower()
+    split = "test" if split == "test" else "validation"
+    labels = {"day": "daily", "week": "weekly", "month": "monthly"}
+    frequencies = [
+        labels[item.strip().lower()]
+        for item in str(env.get("MINING_EVALUATION_FREQUENCIES", "day")).split(",")
+        if item.strip().lower() in labels
+    ] or ["daily"]
+    quantile = number("LONG_SHORT_QUANTILE", 0.1)
+    cost_bps = number("LONG_SHORT_TRANSACTION_COST", 0.0005) * 1e4
+    if profile.mode == "crypto":
+        grouping = "ranked across the whole market on each date"
+    else:
+        grouping = (
+            f"ranked within each {profile.primary_classification} industry group on each date, "
+            "so a pure industry tilt earns nothing"
+        )
+    primary = (
+        "the long-only top group" if profile.mode == "cn"
+        else "the dollar-neutral top-minus-bottom portfolio"
+    )
+    return (
+        f"Every candidate is scored on the {split} period only. "
+        "The factor value known at the close of day t is compared with the close-to-close return "
+        "from day t+1 to day t+2: one trading day is skipped, so an effect that is gone by the "
+        "next close earns nothing. "
+        f"Before scoring, the factor is {grouping}. "
+        "Higher factor values must mean higher expected returns. "
+        f"Portfolios hold the top and bottom {quantile:.0%} of names with equal weights, "
+        f"rebalanced {' and '.join(frequencies)}; the primary result is {primary}. "
+        f"Each rebalance is charged {cost_bps:g} bps per unit of turnover, so a signal whose "
+        "top and bottom groups change every day can lose its whole gross return to costs: "
+        "state the horizon over which the signal should persist and prefer signals whose "
+        "ranks are stable over that horizon."
+    )
