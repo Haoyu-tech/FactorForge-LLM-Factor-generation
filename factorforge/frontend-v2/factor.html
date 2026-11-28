@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/factorforge.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Factor — FactorForge</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/factorMain.tsx"></script>
+  
+<!-- codex-claude-html-editor -->
+<script>
+(function () {
+  if (window.__codexClaudeHtmlEditorInstalled) return;
+  window.__codexClaudeHtmlEditorInstalled = true;
+
+  var selected = null;
+  var previousOutline = "";
+  var editMode = false;
+  var host = document.createElement("div");
+  host.id = "codex-claude-html-editor-host";
+  host.setAttribute("contenteditable", "false");
+  document.body.appendChild(host);
+
+  var shadow = host.attachShadow ? host.attachShadow({ mode: "open" }) : host;
+  shadow.innerHTML = [
+    "<style>",
+    ":host{all:initial}",
+    ".wrap{position:fixed;right:18px;bottom:18px;z-index:2147483647;font-family:Inter,Arial,sans-serif;color:#111827}",
+    "button,input,select{font:12px/1.2 Inter,Arial,sans-serif}",
+    ".toggle{width:44px;height:44px;border-radius:999px;border:1px solid #0f766e;background:#0f766e;color:white;box-shadow:0 8px 24px rgba(15,23,42,.22);cursor:pointer;font-weight:700}",
+    ".panel{display:none;width:292px;margin-bottom:10px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:white;box-shadow:0 14px 36px rgba(15,23,42,.24)}",
+    ".panel.open{display:block}",
+    ".row{display:flex;gap:8px;align-items:center;margin:8px 0}",
+    ".row label{min-width:72px;font-size:12px;color:#334155}",
+    ".row input[type=range]{flex:1}",
+    ".grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}",
+    ".btn{border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;border-radius:6px;padding:7px 8px;cursor:pointer}",
+    ".btn.active{background:#dbeafe;border-color:#2563eb;color:#1e3a8a}",
+    ".btn.primary{background:#0f766e;border-color:#0f766e;color:white}",
+    ".hint{font-size:11px;color:#64748b;margin-top:7px}",
+    "</style>",
+    "<div class='wrap'>",
+    "  <div class='panel' part='panel'>",
+    "    <div class='grid'>",
+    "      <button class='btn' data-action='edit'>Edit text</button>",
+    "      <button class='btn' data-action='save'>Save copy</button>",
+    "      <button class='btn' data-action='replace'>Replace image</button>",
+    "      <button class='btn' data-action='insert'>Insert image</button>",
+    "    </div>",
+    "    <div class='row'><label>Resize</label><input data-action='width' type='range' min='20' max='1600' value='320'></div>",
+    "    <div class='row'><label>Text</label><input data-action='color' type='color' value='#111827'><label>Back</label><input data-action='bg' type='color' value='#ffffff'></div>",
+    "    <div class='row'><label>Font</label><select data-action='font'><option value=''>Default</option><option>Arial</option><option>Georgia</option><option>Helvetica</option><option>Times New Roman</option><option>Trebuchet MS</option><option>Verdana</option></select></div>",
+    "    <div class='hint'>Click an element on the page, then adjust it. Text editing stays on until toggled off.</div>",
+    "    <input data-action='file' type='file' accept='image/*' style='display:none'>",
+    "  </div>",
+    "  <button class='toggle' title='Edit this HTML'>Edit</button>",
+    "</div>"
+  ].join("");
+
+  var panel = shadow.querySelector(".panel");
+  var toggle = shadow.querySelector(".toggle");
+  var editButton = shadow.querySelector("[data-action='edit']");
+  var fileInput = shadow.querySelector("[data-action='file']");
+  var pendingImageAction = "replace";
+
+  function clearSelected() {
+    if (selected && selected.style) selected.style.outline = previousOutline;
+    selected = null;
+    previousOutline = "";
+  }
+
+  function selectElement(el) {
+    if (!el || el === document.documentElement || el === document.body || host.contains(el)) return;
+    clearSelected();
+    selected = el;
+    previousOutline = selected.style.outline || "";
+    selected.style.outline = "2px solid #0f766e";
+    selected.style.outlineOffset = "2px";
+    var width = selected.getBoundingClientRect().width;
+    if (width) shadow.querySelector("[data-action='width']").value = Math.max(20, Math.min(1600, Math.round(width)));
+  }
+
+  function applyToSelected(fn) {
+    if (!selected) return;
+    fn(selected);
+  }
+
+  function readImage(file, callback) {
+    var reader = new FileReader();
+    reader.onload = function () { callback(String(reader.result || "")); };
+    reader.readAsDataURL(file);
+  }
+
+  toggle.addEventListener("click", function () {
+    panel.classList.toggle("open");
+  });
+
+  shadow.addEventListener("click", function (event) {
+    var action = event.target && event.target.getAttribute("data-action");
+    if (!action) return;
+    event.preventDefault();
+    if (action === "edit") {
+      editMode = !editMode;
+      document.body.setAttribute("contenteditable", editMode ? "true" : "false");
+      document.body.setAttribute("spellcheck", "false");
+      editButton.classList.toggle("active", editMode);
+    }
+    if (action === "save") {
+      clearSelected();
+      var blob = new Blob(["<!doctype html>\n" + document.documentElement.outerHTML], { type: "text/html" });
+      var a = document.createElement("a");
+      var base = (document.title || "edited-page").replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || "edited-page";
+      a.href = URL.createObjectURL(blob);
+      a.download = base + ".copy.html";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    }
+    if (action === "replace" || action === "insert") {
+      pendingImageAction = action;
+      fileInput.click();
+    }
+  });
+
+  shadow.addEventListener("input", function (event) {
+    var action = event.target && event.target.getAttribute("data-action");
+    if (action === "width") applyToSelected(function (el) { el.style.width = event.target.value + "px"; el.style.maxWidth = "100%"; });
+    if (action === "color") applyToSelected(function (el) { el.style.color = event.target.value; });
+    if (action === "bg") applyToSelected(function (el) { el.style.backgroundColor = event.target.value; });
+    if (action === "font") applyToSelected(function (el) { el.style.fontFamily = event.target.value || ""; });
+  });
+
+  fileInput.addEventListener("change", function () {
+    var file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    readImage(file, function (src) {
+      if (pendingImageAction === "replace" && selected && selected.tagName === "IMG") {
+        selected.src = src;
+        return;
+      }
+      var img = document.createElement("img");
+      img.src = src;
+      img.alt = file.name.replace(/\.[^.]+$/, "");
+      img.style.maxWidth = "100%";
+      if (selected && selected.parentNode) selected.parentNode.insertBefore(img, selected.nextSibling);
+      else document.body.appendChild(img);
+      selectElement(img);
+    });
+    fileInput.value = "";
+  });
+
+  document.addEventListener("click", function (event) {
+    if (host.contains(event.target)) return;
+    selectElement(event.target);
+  }, true);
+})();
+</script>
+
+</body>
+</html>

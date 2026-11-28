@@ -9,6 +9,15 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    rollupOptions: {
+      // factor.html is a second page: one factor's detail, linked from Top 10 tables.
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        factor: path.resolve(__dirname, 'factor.html'),
+      },
+    },
+  },
   server: {
     port: 3000,
     host: true,

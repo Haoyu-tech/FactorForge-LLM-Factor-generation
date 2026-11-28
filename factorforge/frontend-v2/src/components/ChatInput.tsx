@@ -1,7 +1,21 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Square, Compass } from 'lucide-react';
+import { Send, Sparkles, Square, Compass, Loader2, X } from 'lucide-react';
 import { useLanguage } from '@/context/LanguageContext';
 import { TaskConfig } from '@/types';
+import { checkResearchDirection } from '@/services/api';
+import type { DirectionCheckResult } from '@/services/api';
+import { getDefaultMiningDirection } from '@/utils/miningDirections';
+import { marketSelectionFrom, readSavedConfig } from '@/utils/marketSettings';
+import { DirectionCheckReply } from '@/components/DirectionCheckReply';
+
+/** One turn of the direction-check conversation shown above the input. */
+interface ChatTurn {
+  id: number;
+  direction: string;
+  status: 'checking' | 'done' | 'error' | 'started';
+  result?: DirectionCheckResult;
+  error?: string;
+}
 
 interface ChatInputProps {
   onSubmit: (config: TaskConfig) => void;
@@ -20,6 +34,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
     librarySuffix: '',
   });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const threadEndRef = useRef<HTMLDivElement>(null);
+  const turnIdRef = useRef(0);
+  const checking = turns.some((t) => t.status === 'checking');
 
   const examplePrompts = [
     { label: zh ? '动量与反转' : 'Momentum & reversal', prompt: zh
@@ -33,23 +51,55 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
       : 'Research new factors with low correlation to the existing library using fields available in the configured market. Evaluate validation RankIC and stability, reserving the test set for independent evaluation.' },
   ];
 
-  const canSubmit = !isRunning && (input.trim().length > 0 || useCustomMiningDirection);
+  const canSubmit = !isRunning && !checking && (input.trim().length > 0 || useCustomMiningDirection);
 
-  const handleSubmit = () => {
-    if (!canSubmit) return;
+  const startRun = (turnId: number, direction: string) => {
     const suffix = config.librarySuffix?.trim() || undefined;
+    // The checked direction is passed as text, so a "random" Settings choice
+    // cannot change between the check and the run.
     onSubmit({
-      userInput: input.trim(),
-      useCustomMiningDirection,
       ...config,
+      userInput: direction,
+      useCustomMiningDirection: false,
       librarySuffix: suffix,
     } as TaskConfig);
+    setTurns((prev) => prev.map((t) => (t.id === turnId ? { ...t, status: 'started' } : t)));
   };
+
+  // Sending asks the backend whether the stored data can test the direction.
+  // Mining starts only from the reply, so a direction that needs missing data
+  // gets an explanation and sources instead of unrelated formulas.
+  const handleSubmit = async () => {
+    if (!canSubmit) return;
+    const direction = useCustomMiningDirection
+      ? (getDefaultMiningDirection() || '价量因子挖掘')
+      : input.trim();
+    const selection = marketSelectionFrom(readSavedConfig());
+    const id = ++turnIdRef.current;
+    setTurns((prev) => [...prev, { id, direction, status: 'checking' }]);
+    if (!useCustomMiningDirection) setInput('');
+    try {
+      const resp = await checkResearchDirection({
+        direction,
+        marketMode: selection.marketMode,
+        dataSource: selection.dataSource,
+      });
+      if (!resp.success || !resp.data) throw new Error(resp.error || 'Check failed');
+      const result = resp.data;
+      setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, status: 'done', result } : t)));
+    } catch (err: any) {
+      setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, status: 'error', error: err?.message || String(err) } : t)));
+    }
+  };
+
+  useEffect(() => {
+    threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [turns]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit();
+      void handleSubmit();
     }
   };
 
@@ -72,7 +122,67 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
         )}
 
         {/* Example Prompts */}
-        {!input && !isRunning && (
+        {turns.length > 0 && (
+          <div className="mx-auto mb-3 max-w-3xl rounded-2xl border border-slate-200 bg-white/95 shadow-[0_18px_46px_rgba(15,23,42,.12)] backdrop-blur">
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                {zh ? '研究方向数据检查' : 'Research direction data check'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setTurns([])}
+                disabled={checking}
+                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
+                title={zh ? '清空对话' : 'Clear conversation'}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="max-h-[52vh] space-y-4 overflow-y-auto px-4 py-3">
+              {turns.map((turn) => (
+                <div key={turn.id} className="space-y-2">
+                  <div className="flex justify-end">
+                    <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary/10 px-3 py-2 text-sm text-slate-800">
+                      {turn.direction}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl rounded-bl-sm border border-slate-100 bg-slate-50/70 px-3 py-3">
+                    {turn.status === 'checking' && (
+                      <div className="flex items-center gap-2 text-sm text-slate-600">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {zh ? '正在对照数据库字段检查这个方向需要的数据…' : 'Checking the data this direction needs against the database fields…'}
+                      </div>
+                    )}
+                    {turn.status === 'error' && (
+                      <div className="text-sm text-rose-700">{turn.error}</div>
+                    )}
+                    {(turn.status === 'done' || turn.status === 'started') && turn.result && (
+                      <DirectionCheckReply
+                        result={turn.result}
+                        zh={zh}
+                        disabled={isRunning || turn.status === 'started'}
+                        onStart={(direction) => startRun(turn.id, direction)}
+                        onUseSuggestion={(direction) => {
+                          setUseCustomMiningDirection(false);
+                          setInput(direction);
+                          textareaRef.current?.focus();
+                        }}
+                      />
+                    )}
+                    {turn.status === 'started' && (
+                      <div className="mt-2 text-xs font-semibold text-emerald-700">
+                        {zh ? '已提交挖掘任务，可在仪表盘查看进度。' : 'Mining request sent. Follow progress on the dashboard.'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div ref={threadEndRef} />
+            </div>
+          </div>
+        )}
+
+        {!input && !isRunning && turns.length === 0 && (
           <div className="flex flex-wrap justify-center gap-2 mb-3 overflow-x-auto pb-2 scrollbar-hide">
             {examplePrompts.map((prompt, idx) => (
               <button
@@ -145,12 +255,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
                     </button>
                   ) : (
                     <button
-                      onClick={handleSubmit}
+                      onClick={() => void handleSubmit()}
                       disabled={!canSubmit}
                       className="p-2.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95"
-                      title={canSubmit ? '发送 (Enter)' : '请输入挖掘需求，或开启自选挖掘方向'}
+                      title={canSubmit ? (zh ? '检查数据并回复 (Enter)' : 'Check the data and reply (Enter)') : (zh ? '请输入挖掘需求，或开启自选挖掘方向' : 'Type a direction, or turn on custom research directions')}
                     >
-                      <Send className="h-5 w-5" />
+                      {checking ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
                     </button>
                   )}
                 </div>

@@ -32,6 +32,8 @@ export interface TaskConfig {
 
   // Backtest configuration
   market?: 'csi300' | 'csi500' | 'sp500';
+  /** Set by the backend when the run starts. */
+  marketMode?: 'us' | 'cn' | 'crypto';
   startDate?: string;
   endDate?: string;
 
@@ -62,6 +64,10 @@ export interface RealtimeMetrics {
   
   // Top 10 factors list
   top10Factors?: Array<{
+    /** Id and library file of the factor, for linking to its detail page. */
+    factorId?: string;
+    library?: string;
+    marketMode?: 'us' | 'cn' | 'crypto';
     factorName: string;
     factorExpression: string;
     rankIc: number;
@@ -216,6 +222,8 @@ export interface Task {
   /** How this run reaches its LLM, recorded at launch. */
   llm?: LlmChannel | null;
   createdAt: string;
+  /** Run folder under log/, e.g. exp_20261121_181720; recorded by the backend at launch. */
+  experimentId?: string;
   /** When the run completed, failed or was stopped; null while running. */
   completedAt?: string | null;
   durationSeconds?: number | null;

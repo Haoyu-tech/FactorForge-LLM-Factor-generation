@@ -16,6 +16,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 from urllib.parse import urlparse
 import uuid
 from datetime import datetime
@@ -35,6 +36,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 DOTENV_PATH = PROJECT_ROOT / ".env"
+
+from quantaalpha.utils.file_cache import FileStatCache  # noqa: E402  (needs PROJECT_ROOT on sys.path)
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -160,6 +163,7 @@ class SystemConfigUpdate(BaseModel):
     MINING_LIGHTGBM_ENABLED: Optional[bool] = None
     DATA_SOURCE: Optional[str] = None
     WRDS_ROOT: Optional[str] = None
+    IBES_ROOT: Optional[str] = None
     WRDS_QLIB_DATA_DIR: Optional[str] = None
     MARKET_MODE: Optional[str] = None
     DEFAULT_MARKET: Optional[str] = None
@@ -235,6 +239,15 @@ def _empty_usage() -> Dict[str, Any]:
         # Per-model breakdown: a run can touch a chat model and an embedding
         # model with different prices and different transports.
         "byModel": [],
+    }
+
+
+def _empty_mining_metrics() -> Dict[str, Any]:
+    return {
+        "ic": 0, "icir": 0, "rankIc": 0, "rankIcir": 0,
+        "annualReturn": 0, "sharpeRatio": 0, "maxDrawdown": 0,
+        "totalFactors": 0, "highQualityFactors": 0,
+        "mediumQualityFactors": 0, "lowQualityFactors": 0,
     }
 
 
@@ -345,6 +358,57 @@ def _mark_task_finished(task: Dict[str, Any]) -> None:
         task["durationSeconds"] = round((finished - started).total_seconds(), 1)
     except (TypeError, ValueError):
         task["durationSeconds"] = None
+    _save_run_record(task)
+
+
+# Last time each task's run.json was written, for throttling usage updates.
+_run_record_saved_at: Dict[str, float] = {}
+_RUN_RECORD_MIN_INTERVAL_S = 20.0
+
+
+def _save_run_record(task: Dict[str, Any], *, throttle: bool = False) -> None:
+    """Write log/<experimentId>/run.json from the in-memory task.
+
+    The task list lives only in memory, so this file is what keeps a run's
+    prompt, LLM channel, token use, outcome and timing after a restart. The
+    launch request carries no secrets (keys come from .env), so its settings
+    are saved as they are.
+    """
+    experiment_id = task.get("experimentId")
+    if not experiment_id or task.get("type") == "backtest":
+        return
+    now = time.monotonic()
+    if throttle and now - _run_record_saved_at.get(task["taskId"], 0.0) < _RUN_RECORD_MIN_INTERVAL_S:
+        return
+    from quantaalpha.utils.run_record import write_run_record
+
+    config = dict(task.get("config") or {})
+    progress = task.get("progress") or {}
+    record = {
+        "source": "backend",
+        "experimentId": experiment_id,
+        "taskId": task.get("taskId"),
+        "status": task.get("status"),
+        "statusMessage": progress.get("message"),
+        "direction": config.pop("direction", None),
+        "llm": task.get("llm"),
+        "usage": task.get("usage"),
+        "startedAt": task.get("createdAt"),
+        "completedAt": task.get("completedAt"),
+        "completedAtEstimated": False,
+        "durationSeconds": task.get("durationSeconds"),
+        "progress": {
+            "currentRound": progress.get("currentRound"),
+            "totalRounds": progress.get("totalRounds"),
+        },
+        "settings": config,
+        "updatedAt": _now(),
+    }
+    try:
+        write_run_record(PROJECT_ROOT / "log" / experiment_id, record)
+        _run_record_saved_at[task["taskId"]] = now
+    except OSError as error:
+        print(f"Could not save run record for {experiment_id}: {error}", flush=True)
 
 
 def _total_memory_gib() -> float:
@@ -372,6 +436,29 @@ def _load_dotenv_dict() -> Dict[str, str]:
                     val = val[1:-1]
                 env[key.strip()] = val
     return env
+
+
+def _apply_llm_backend_env(env: Dict[str, str], dotenv: Dict[str, str]) -> None:
+    """Point a child process at the LLM channel chosen in .env."""
+    if str(dotenv.get("USE_CLAUDE_CLI", "")).lower() in {"1", "true", "yes", "on"}:
+        env["USE_CLAUDE_CLI"] = "true"
+        env["USE_CODEX_CLI"] = "false"
+        env["BACKEND"] = "quantaalpha.llm.rdagent_claude_backend.ClaudeCLIAPIBackend"
+    elif str(dotenv.get("USE_CODEX_CLI", "")).lower() in {"1", "true", "yes", "on"}:
+        env["USE_CODEX_CLI"] = "true"
+        env["USE_CLAUDE_CLI"] = "false"
+        env["BACKEND"] = "quantaalpha.llm.rdagent_codex_backend.CodexCLIAPIBackend"
+
+
+def _qlib_dir_for_market(market_mode: str, data_source: Optional[str], dotenv: Dict[str, str]) -> Optional[str]:
+    """The Qlib store a mining run for this market reads, as _run_mining resolves it."""
+    if market_mode == "crypto":
+        return dotenv.get("CRYPTO_QLIB_DATA_DIR", str(PROJECT_ROOT / "data" / "qlib" / "binance_usdm"))
+    if market_mode == "cn":
+        return dotenv.get("CN_QLIB_DATA_DIR", str(PROJECT_ROOT / "data" / "qlib" / "cn_market"))
+    if (data_source or "wrds") == "wrds":
+        return dotenv.get("WRDS_QLIB_DATA_DIR", str(PROJECT_ROOT / "data" / "qlib" / "wrds_sp500"))
+    return dotenv.get("QLIB_DATA_DIR")
 
 
 def _find_factor_jsons() -> List[str]:
@@ -582,6 +669,15 @@ def _prune_stale_factor_split_caches() -> Dict[str, Any]:
 
 
 @app.on_event("startup")
+async def close_interrupted_run_records_on_startup() -> None:
+    """Mark runs a previous backend left as running; none can still report here."""
+    from quantaalpha.utils.run_record import mark_interrupted_runs
+    closed = await asyncio.to_thread(mark_interrupted_runs, PROJECT_ROOT / "log")
+    if closed:
+        print(f"Marked {len(closed)} run record(s) as interrupted: {', '.join(closed)}", flush=True)
+
+
+@app.on_event("startup")
 async def prune_stale_factor_split_caches_on_startup() -> None:
     result = await asyncio.to_thread(_prune_stale_factor_split_caches)
     if result["removed"]:
@@ -590,12 +686,60 @@ async def prune_stale_factor_split_caches_on_startup() -> None:
             f"{len(result['changedLibraries'])} factor libraries",
             flush=True,
         )
+    # Fill the factor-list cache in the background, so the first page load
+    # after a restart does not wait for every library to be parsed.
+    warm = asyncio.get_running_loop().create_task(asyncio.to_thread(_warm_library_summaries))
+    _BACKGROUND_TASKS.add(warm)  # the loop keeps only a weak reference
+    warm.add_done_callback(_BACKGROUND_TASKS.discard)
+
+
+_BACKGROUND_TASKS: set = set()
+
+
+def _warm_library_summaries() -> None:
+    for path in _find_factor_jsons():
+        try:
+            _library_summary(path)
+        except Exception:
+            continue
 
 
 def _load_factor_library(path: str) -> Dict[str, Any]:
     """Load a factor library, tolerating a complete document plus a torn tail."""
     from quantaalpha.factors.library import _decode_library_text
     return _decode_library_text(Path(path).read_text(encoding="utf-8"))
+
+
+# Each library's market and its factors' list rows, rebuilt only when the file
+# changes. Parsing every library (hundreds of MB) on each factor-list request
+# held the server for seconds, so even /api/health waited behind it.
+_LIBRARY_SUMMARIES = FileStatCache()
+
+
+def _library_summary(path: str | Path) -> Dict[str, Any]:
+    """{"scope", "metadata", "rows": [(identity, list entry)]} for one library.
+
+    The value is shared between requests: read it, never mutate it.
+    """
+    return _LIBRARY_SUMMARIES.get(path, _build_library_summary)
+
+
+def _build_library_summary(path: str) -> Dict[str, Any]:
+    raw = _load_factor_library(path)
+    scope = _factor_library_scope(path, raw)
+    metadata = raw.get("metadata", {})
+    name = Path(path).name
+    rows = []
+    for factor_id, factor_info in (raw.get("factors") or {}).items():
+        if not isinstance(factor_info, dict):
+            continue
+        # The same factor can sit in several historical snapshots; the
+        # all-history view keeps the newest copy of each identity.
+        canonical_id = str(factor_info.get("factor_id") or factor_id).strip()
+        expression = str(factor_info.get("factor_expression") or "").strip()
+        identity = ("id", canonical_id) if canonical_id else ("expression", expression)
+        rows.append((identity, _factor_list_entry(factor_id, factor_info, name, scope, metadata)))
+    return {"scope": scope, "metadata": metadata, "rows": rows}
 
 
 def _assess_quality(factor_info: Dict[str, Any]) -> Dict[str, Any]:
@@ -787,20 +931,14 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         # Record which LLM channel this run uses, before anything is called.
         task["llm"] = _describe_llm_channel(dotenv)
 
-        if str(dotenv.get("USE_CLAUDE_CLI", "")).lower() in {"1", "true", "yes", "on"}:
-            env["USE_CLAUDE_CLI"] = "true"
-            env["USE_CODEX_CLI"] = "false"
-            env["BACKEND"] = "quantaalpha.llm.rdagent_claude_backend.ClaudeCLIAPIBackend"
-        elif str(dotenv.get("USE_CODEX_CLI", "")).lower() in {"1", "true", "yes", "on"}:
-            env["USE_CODEX_CLI"] = "true"
-            env["USE_CLAUDE_CLI"] = "false"
-            env["BACKEND"] = "quantaalpha.llm.rdagent_codex_backend.CodexCLIAPIBackend"
+        _apply_llm_backend_env(env, dotenv)
 
         # Use experiment_id as suffix to guarantee isolation
         experiment_id = f"exp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         env["EXPERIMENT_ID"] = experiment_id
         env["LOG_TRACE_PATH"] = str(PROJECT_ROOT / "log" / experiment_id)
-        
+        task["experimentId"] = experiment_id
+
         if req.marketMode == "crypto" or req.dataSource == "binance_futures":
             market_mode, market = "crypto", "binance_usdm"
         elif req.marketMode == "cn" or req.dataSource == "cn_duckdb":
@@ -818,6 +956,8 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         env["FACTOR_LIBRARY_SUFFIX"] = req.librarySuffix
         env["MINING_LIGHTGBM_ENABLED"] = "true" if req.miningLightgbmEnabled else "false"
         task["config"]["miningLightgbmEnabled"] = req.miningLightgbmEnabled
+        # Saved once the library name is final, so the record can find it.
+        _save_run_record(task)
 
         date_overrides = {
             "TRAIN_START_DATE": req.trainStartDate,
@@ -1073,6 +1213,7 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
             # into the task, never shown as a log line.
             if _LLM_USAGE_MARKER in line:
                 if _record_llm_usage(task, line):
+                    _save_run_record(task, throttle=True)
                     await _broadcast(task_id, {
                         "type": "usage",
                         "taskId": task_id,
@@ -1091,6 +1232,7 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
                     task["progress"]["currentRound"] = round_idx + 1
                     task["progress"]["progress"] = round(100 * round_idx / total_rounds, 1)
                     task["progress"]["timestamp"] = _now()
+                    _save_run_record(task)
                     await _broadcast(task_id, {
                         "type": "progress",
                         "taskId": task_id,
@@ -1169,7 +1311,8 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
             
             # Check for factor saving to update top factors list
             if "已保存" in line or "因子" in line:
-                _update_mining_metrics(task)
+                # Read the library off the event loop; apply the result here.
+                task["metrics"].update(await asyncio.to_thread(_mining_metrics_updates, task))
                 if task.get("metrics"):
                      await _broadcast(task_id, {
                         "type": "result",
@@ -1197,9 +1340,13 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         _mark_task_finished(task)
         task["updatedAt"] = _now()
 
+        # A stop finalises the record before the process has drained its
+        # output, so write it again with the usage lines read since.
+        _save_run_record(task)
+
         # Load final factor count from the library JSON
         # Prefer the library file matching the librarySuffix for this experiment
-        _update_mining_metrics(task)
+        task["metrics"].update(await asyncio.to_thread(_mining_metrics_updates, task))
 
         await _broadcast(task_id, {
             "type": "result",
@@ -1341,12 +1488,7 @@ async def start_mining(req: MiningStartRequest):
             "level": "warning",
             "message": resource_note,
         }] if resource_note else []),
-        "metrics": {
-            "ic": 0, "icir": 0, "rankIc": 0, "rankIcir": 0,
-            "annualReturn": 0, "sharpeRatio": 0, "maxDrawdown": 0,
-            "totalFactors": 0, "highQualityFactors": 0,
-            "mediumQualityFactors": 0, "lowQualityFactors": 0,
-        },
+        "metrics": _empty_mining_metrics(),
         "result": None,
         "pid": None,
         "usage": _empty_usage(),
@@ -1369,12 +1511,173 @@ async def start_mining(req: MiningStartRequest):
     )
 
 
+class DirectionCheckRequest(BaseModel):
+    direction: str = Field(..., min_length=1, max_length=4000)
+    marketMode: str = "us"
+    dataSource: Optional[str] = None
+
+
+DIRECTION_CHECK_TIMEOUT_SECONDS = 300
+
+
+@app.post("/api/v1/research/check-direction", response_model=ApiResponse)
+async def check_research_direction(req: DirectionCheckRequest):
+    """Say whether a direction can be tested with the stored data, before mining.
+
+    The answer lists the stored fields that measure each part of the idea and,
+    for the parts that are missing, checked sources from
+    quantaalpha/research/source_registry.py. It runs in a child process so the
+    LLM channel is configured exactly as for a mining run.
+    """
+    import tempfile
+
+    market_mode = req.marketMode if req.marketMode in {"us", "cn", "crypto"} else "us"
+    dotenv = _load_dotenv_dict()
+    env = os.environ.copy()
+    env.update(dotenv)
+    _apply_llm_backend_env(env, dotenv)
+    env["MARKET_MODE"] = market_mode
+    qlib_dir = _qlib_dir_for_market(market_mode, req.dataSource, dotenv)
+
+    with tempfile.TemporaryDirectory(prefix="direction_check_") as tmp:
+        direction_file = Path(tmp) / "direction.txt"
+        output_file = Path(tmp) / "result.json"
+        direction_file.write_text(req.direction, encoding="utf-8")
+        cmd = [
+            sys.executable, "-m", "quantaalpha.research.data_feasibility",
+            "--direction-file", str(direction_file),
+            "--market-mode", market_mode,
+            "--output", str(output_file),
+        ]
+        if qlib_dir:
+            cmd += ["--qlib-dir", qlib_dir]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, cwd=str(PROJECT_ROOT), env=env,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            output, _ = await asyncio.wait_for(proc.communicate(), timeout=DIRECTION_CHECK_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise HTTPException(status_code=504, detail="数据可用性检查超时，请稍后重试。")
+        if proc.returncode != 0 or not output_file.exists():
+            tail = output.decode("utf-8", errors="replace")[-800:] if output else ""
+            raise HTTPException(status_code=500, detail=f"数据可用性检查失败：{tail.strip() or proc.returncode}")
+        result = json.loads(output_file.read_text(encoding="utf-8"))
+    result["storePath"] = qlib_dir
+    return ApiResponse(success=True, data=result)
+
+
 @app.get("/api/v1/mining/{task_id}", response_model=ApiResponse)
 async def get_mining_status(task_id: str):
     """Get task status."""
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="Task not found")
     return ApiResponse(success=True, data={"task": tasks[task_id]})
+
+
+def _live_mining_task(experiment_id: str) -> Optional[Dict[str, Any]]:
+    return next(
+        (t for t in tasks.values()
+         if t.get("type") != "backtest" and t.get("experimentId") == experiment_id),
+        None,
+    )
+
+
+def _overlay_live_task(summary: Dict[str, Any]) -> Dict[str, Any]:
+    """Prefer the in-memory task for a run this backend is tracking.
+
+    run.json is written at most every 20 s while tokens are used; the task is
+    current, so a running run shows its latest status and usage.
+    """
+    task = _live_mining_task(summary["experimentId"])
+    if task is None:
+        return summary
+    progress = task.get("progress") or {}
+    summary.update({
+        "status": task.get("status"),
+        "statusMessage": progress.get("message"),
+        "completedAt": task.get("completedAt"),
+        "completedAtEstimated": False,
+        "durationSeconds": task.get("durationSeconds"),
+        "llm": task.get("llm"),
+        "usage": task.get("usage"),
+        "roundsPlanned": progress.get("totalRounds") or summary.get("roundsPlanned"),
+        "roundsReached": progress.get("currentRound") or summary.get("roundsReached"),
+        "taskId": task.get("taskId"),
+    })
+    return summary
+
+
+def _run_library_metrics(summary: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Top factors of a past run, computed exactly as the live dashboard does."""
+    library = summary.get("library")
+    if not library:
+        return None
+    suffix = library["file"][len("all_factors_library_"):-len(".json")]
+    settings = summary.get("settings") or {}
+    stand_in = {
+        "config": {
+            "librarySuffix": suffix,
+            "evaluationFrequencies": settings.get("evaluationFrequencies") or [],
+            "marketMode": library.get("marketMode") or settings.get("marketMode") or "us",
+        },
+        # Skips factors a shared custom-suffix library got before this run.
+        "createdAt": summary.get("startedAt"),
+        "metrics": _empty_mining_metrics(),
+    }
+    _update_mining_metrics(stand_in)
+    return stand_in["metrics"]
+
+
+@app.get("/api/v1/experiments", response_model=ApiResponse)
+async def list_experiments():
+    """Every mining run under log/, newest first, from the files each left."""
+    from quantaalpha.utils.run_history import list_runs
+
+    runs = await asyncio.to_thread(list_runs, PROJECT_ROOT / "log", PROJECT_ROOT / "data" / "factorlib")
+    return ApiResponse(success=True, data={"runs": [_overlay_live_task(run) for run in runs]})
+
+
+@app.get("/api/v1/experiments/{experiment_id}", response_model=ApiResponse)
+async def get_experiment(experiment_id: str):
+    """One run's record, planned directions, round scores and top factors."""
+    from quantaalpha.utils.round_feedback import is_experiment_id
+    from quantaalpha.utils.run_history import summarize_run
+
+    if not is_experiment_id(experiment_id):
+        raise HTTPException(status_code=400, detail="Invalid experiment id")
+    log_root = PROJECT_ROOT / "log" / experiment_id
+    if not log_root.is_dir():
+        raise HTTPException(status_code=404, detail="No such run")
+
+    def build() -> Dict[str, Any]:
+        summary = summarize_run(log_root, PROJECT_ROOT / "data" / "factorlib", detail=True)
+        summary["factorMetrics"] = _run_library_metrics(summary)
+        return summary
+
+    return ApiResponse(success=True, data=_overlay_live_task(await asyncio.to_thread(build)))
+
+
+@app.get("/api/v1/experiments/{experiment_id}/feedback", response_model=ApiResponse)
+async def get_experiment_feedback(experiment_id: str):
+    """Per-round LLM feedback (accepted and rejected) from a run's trajectory pool.
+
+    Keyed by run folder rather than task id so it still works after a backend
+    restart, when in-memory tasks are gone but log/<experiment_id>/ remains.
+    """
+    from quantaalpha.utils.round_feedback import (
+        FeedbackNotReady, is_experiment_id, load_round_feedback,
+    )
+
+    if not is_experiment_id(experiment_id):
+        raise HTTPException(status_code=400, detail="Invalid experiment id")
+    try:
+        report = await asyncio.to_thread(load_round_feedback, PROJECT_ROOT / "log" / experiment_id)
+    except FeedbackNotReady as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    return ApiResponse(success=True, data={"experimentId": experiment_id, **report})
 
 
 @app.delete("/api/v1/mining/{task_id}", response_model=ApiResponse)
@@ -1432,8 +1735,80 @@ async def list_tasks():
 
 # ---- Factor library endpoints ----
 
+def _factor_list_entry(
+    factor_id: str,
+    factor_info: Dict[str, Any],
+    source_library: str,
+    scope: Dict[str, str],
+    metadata: Dict[str, Any],
+) -> Dict[str, Any]:
+    """One factor's row in the factor list, with quality and headline metrics."""
+    bt = factor_info.get("backtest_results", {})
+    factor_market_mode = factor_info.get("market_mode") or scope.get("marketMode", "us")
+    quality_assessment = _assess_quality({
+        **factor_info,
+        "market_mode": factor_market_mode,
+    })
+    q = quality_assessment["quality"]
+    # Extract metrics with proper fallbacks
+    # Try specific keys first, then standard ones
+    ic = bt.get("IC", bt.get("1day.excess_return_without_cost.information_coefficient", 0))
+    icir = bt.get("ICIR", bt.get("1day.excess_return_without_cost.information_coefficient_ir", 0))
+    rank_ic = bt.get("Rank IC", bt.get("rank_ic", bt.get("1day.excess_return_without_cost.rank_ic", 0)))
+    rank_icir = bt.get("Rank ICIR", bt.get("rank_ic_ir", bt.get("1day.excess_return_without_cost.rank_ic_ir", 0)))
+
+    frequency = _factor_frequency(bt)
+    portfolio_stats = _portfolio_statistics(bt, frequency)
+    asset_pricing = _asset_pricing_statistics(bt, frequency)
+    industry_statistics = _industry_statistics(bt, frequency)
+    preferred_leg = "long" if factor_market_mode == "cn" else "long_short"
+    preferred_portfolio = portfolio_stats.get(preferred_leg, {})
+    legacy_annual_return = bt.get("1day.excess_return_with_cost.annualized_return",
+                                  bt.get("1day.excess_return_without_cost.annualized_return", 0))
+    legacy_max_drawdown = bt.get("1day.excess_return_with_cost.max_drawdown",
+                                 bt.get("1day.excess_return_without_cost.max_drawdown", 0))
+    legacy_sharpe = bt.get("1day.excess_return_with_cost.information_ratio",
+                           bt.get("1day.excess_return_without_cost.information_ratio", 0))
+
+    factor_entry = {
+        "factorId": factor_info.get("factor_id", factor_id),
+        "factorName": factor_info.get("factor_name", "Unknown"),
+        "factorExpression": factor_info.get("factor_expression", ""),
+        "factorDescription": factor_info.get("factor_description", ""),
+        "factorFormulation": factor_info.get("factor_formulation", ""),
+        "llmExplanation": factor_info.get("llm_explanation", {}),
+        "quality": q,
+        "qualityScore": quality_assessment["score"],
+        "qualityAssessment": quality_assessment,
+        "backtestResults": bt,
+        "splitResults": _valid_factor_split_results(factor_info, metadata, factor_market_mode),
+        # Extract key metrics
+        "ic": ic,
+        "icir": icir,
+        "rankIc": rank_ic,
+        "rankIcir": rank_icir,
+        "frequency": frequency,
+        "portfolioStats": portfolio_stats,
+        "assetPricing": asset_pricing,
+        "industryStatistics": industry_statistics,
+        "preferredPortfolioLeg": preferred_leg,
+        "annualReturn": preferred_portfolio.get("annualizedNetReturn") if preferred_portfolio.get("annualizedNetReturn") is not None else legacy_annual_return,
+        "maxDrawdown": preferred_portfolio.get("maxDrawdown") if preferred_portfolio.get("maxDrawdown") is not None else legacy_max_drawdown,
+        "sharpeRatio": preferred_portfolio.get("sharpeRatio") if preferred_portfolio.get("sharpeRatio") is not None else legacy_sharpe,
+        "round": factor_info.get("evolution_metadata", {}).get("round", 0)
+        if isinstance(factor_info.get("evolution_metadata"), dict) else 0,
+        "direction": factor_info.get("evolution_metadata", {}).get("direction_index", "")
+        if isinstance(factor_info.get("evolution_metadata"), dict) else "",
+        "createdAt": factor_info.get("added_at", ""),
+        "sourceLibrary": source_library,
+        "marketMode": factor_market_mode,
+        "market": factor_info.get("market") or scope.get("market", "sp500"),
+    }
+    return factor_entry
+
+
 @app.get("/api/v1/factors", response_model=ApiResponse)
-async def get_factors(
+def get_factors(
     quality: Optional[str] = Query(None, description="Filter by quality: high/medium/low"),
     search: Optional[str] = Query(None, description="Search by factor name"),
     limit: int = Query(100, ge=1, le=5000),
@@ -1442,16 +1817,18 @@ async def get_factors(
     marketMode: str = Query("us", pattern="^(us|cn|crypto)$"),
     market: str = Query("sp500", pattern="^(sp500|csi300|csi500|sme_composite|binance_usdm)$"),
 ):
-    """Get factors from the factor library JSON."""
+    """Get factors from the factor library JSON.
+
+    A plain def, so FastAPI runs it on a worker thread: reading a library the
+    cache has not seen yet must not stall other requests.
+    """
     all_library_paths = _find_factor_jsons()
+    _LIBRARY_SUMMARIES.retain(all_library_paths)
     library_scopes: List[Dict[str, Any]] = []
     scope_by_name: Dict[str, Dict[str, str]] = {}
-    payload_by_name: Dict[str, Dict[str, Any]] = {}
     for path in all_library_paths:
         try:
-            loaded_library = _load_factor_library(path)
-            payload_by_name[Path(path).name] = loaded_library
-            scope = _factor_library_scope(path, loaded_library)
+            scope = _library_summary(path)["scope"]
         except Exception:
             scope = _factor_library_scope(path)
         descriptor = {"filename": Path(path).name, **scope}
@@ -1470,28 +1847,23 @@ async def get_factors(
                   "activeScope": {"marketMode": marketMode, "market": market}},
         )
 
-    factor_records: List[tuple[str, Dict[str, Any], str]] = []
+    factors_list: List[Dict[str, Any]] = []
     if library == "__all__":
         # Files are newest first. Keep the newest copy when a factor appears in
         # more than one historical snapshot.
         seen = set()
         for path in library_paths:
             try:
-                historical = _load_factor_library(path)
+                rows = _library_summary(path)["rows"]
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=f"Failed to read factor library: {exc}")
-            for factor_id, factor_info in historical.get("factors", {}).items():
-                if not isinstance(factor_info, dict):
-                    continue
-                canonical_id = str(factor_info.get("factor_id") or factor_id).strip()
-                expression = str(factor_info.get("factor_expression") or "").strip()
-                identity = ("id", canonical_id) if canonical_id else ("expression", expression)
+            for identity, entry in rows:
                 if identity in seen:
                     continue
                 seen.add(identity)
-                factor_records.append((factor_id, factor_info, Path(path).name))
+                factors_list.append(entry)
         metadata = {
-            "total_factors": len(factor_records),
+            "total_factors": len(factors_list),
             "library_count": len(library_paths),
             "all_history": True,
             "last_updated": datetime.fromtimestamp(max(os.path.getmtime(path) for path in library_paths)).isoformat(),
@@ -1505,7 +1877,7 @@ async def get_factors(
                 legacy_path = PROJECT_ROOT / library
                 lib_path = legacy_path if legacy_path.exists() else lib_path
             if lib_path.exists():
-                selected_scope = _factor_library_scope(lib_path, _load_factor_library(str(lib_path)))
+                selected_scope = _library_summary(lib_path)["scope"]
                 if selected_scope["marketMode"] != marketMode or selected_scope["market"] != market:
                     raise HTTPException(status_code=400, detail="Factor library does not belong to the selected market")
         else:
@@ -1513,90 +1885,11 @@ async def get_factors(
         if not lib_path.exists():
             raise HTTPException(status_code=404, detail="Factor library not found")
         try:
-            raw = _load_factor_library(str(lib_path))
+            summary = _library_summary(lib_path)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Failed to read factor library: {exc}")
-        metadata = raw.get("metadata", {})
-        factor_records = [
-            (factor_id, factor_info, lib_path.name)
-            for factor_id, factor_info in raw.get("factors", {}).items()
-            if isinstance(factor_info, dict)
-        ]
-
-    # Convert dict to list with quality classification
-    factors_list: List[Dict[str, Any]] = []
-    for factor_id, factor_info, source_library in factor_records:
-        if not isinstance(factor_info, dict):
-            continue
-        bt = factor_info.get("backtest_results", {})
-        factor_market_mode = (
-            factor_info.get("market_mode")
-            or scope_by_name.get(source_library, {}).get("marketMode", "us")
-        )
-        quality_assessment = _assess_quality({
-            **factor_info,
-            "market_mode": factor_market_mode,
-        })
-        q = quality_assessment["quality"]
-        # Extract metrics with proper fallbacks
-        # Try specific keys first, then standard ones
-        ic = bt.get("IC", bt.get("1day.excess_return_without_cost.information_coefficient", 0))
-        icir = bt.get("ICIR", bt.get("1day.excess_return_without_cost.information_coefficient_ir", 0))
-        rank_ic = bt.get("Rank IC", bt.get("rank_ic", bt.get("1day.excess_return_without_cost.rank_ic", 0)))
-        rank_icir = bt.get("Rank ICIR", bt.get("rank_ic_ir", bt.get("1day.excess_return_without_cost.rank_ic_ir", 0)))
-        
-        frequency = _factor_frequency(bt)
-        portfolio_stats = _portfolio_statistics(bt, frequency)
-        asset_pricing = _asset_pricing_statistics(bt, frequency)
-        industry_statistics = _industry_statistics(bt, frequency)
-        preferred_leg = "long" if factor_market_mode == "cn" else "long_short"
-        preferred_portfolio = portfolio_stats.get(preferred_leg, {})
-        legacy_annual_return = bt.get("1day.excess_return_with_cost.annualized_return",
-                                      bt.get("1day.excess_return_without_cost.annualized_return", 0))
-        legacy_max_drawdown = bt.get("1day.excess_return_with_cost.max_drawdown",
-                                     bt.get("1day.excess_return_without_cost.max_drawdown", 0))
-        legacy_sharpe = bt.get("1day.excess_return_with_cost.information_ratio",
-                               bt.get("1day.excess_return_without_cost.information_ratio", 0))
-
-        factor_entry = {
-            "factorId": factor_info.get("factor_id", factor_id),
-            "factorName": factor_info.get("factor_name", "Unknown"),
-            "factorExpression": factor_info.get("factor_expression", ""),
-            "factorDescription": factor_info.get("factor_description", ""),
-            "factorFormulation": factor_info.get("factor_formulation", ""),
-            "llmExplanation": factor_info.get("llm_explanation", {}),
-            "quality": q,
-            "qualityScore": quality_assessment["score"],
-            "qualityAssessment": quality_assessment,
-            "backtestResults": bt,
-            "splitResults": _valid_factor_split_results(
-                factor_info,
-                (payload_by_name.get(source_library) or {}).get("metadata", {}),
-                factor_market_mode,
-            ),
-            # Extract key metrics
-            "ic": ic,
-            "icir": icir,
-            "rankIc": rank_ic,
-            "rankIcir": rank_icir,
-            "frequency": frequency,
-            "portfolioStats": portfolio_stats,
-            "assetPricing": asset_pricing,
-            "industryStatistics": industry_statistics,
-            "preferredPortfolioLeg": preferred_leg,
-            "annualReturn": preferred_portfolio.get("annualizedNetReturn") if preferred_portfolio.get("annualizedNetReturn") is not None else legacy_annual_return,
-            "maxDrawdown": preferred_portfolio.get("maxDrawdown") if preferred_portfolio.get("maxDrawdown") is not None else legacy_max_drawdown,
-            "sharpeRatio": preferred_portfolio.get("sharpeRatio") if preferred_portfolio.get("sharpeRatio") is not None else legacy_sharpe,
-            "round": factor_info.get("evolution_metadata", {}).get("round", 0)
-            if isinstance(factor_info.get("evolution_metadata"), dict) else 0,
-            "direction": factor_info.get("evolution_metadata", {}).get("direction_index", "")
-            if isinstance(factor_info.get("evolution_metadata"), dict) else "",
-            "createdAt": factor_info.get("added_at", ""),
-            "sourceLibrary": source_library,
-            "marketMode": factor_market_mode,
-            "market": factor_info.get("market") or scope_by_name.get(source_library, {}).get("market", "sp500"),
-        }
-        factors_list.append(factor_entry)
+        metadata = summary["metadata"]
+        factors_list = [entry for _, entry in summary["rows"]]
 
     # Apply filters
     if quality:
@@ -1829,8 +2122,11 @@ async def list_factor_libraries():
 
 
 @app.post("/api/v1/factors/delete", response_model=ApiResponse)
-async def delete_factors(req: FactorDeleteRequest):
-    """Delete selected factors atomically from one library or all history."""
+def delete_factors(req: FactorDeleteRequest):
+    """Delete selected factors atomically from one library or all history.
+
+    A plain def so the library reads and rewrites run on a worker thread.
+    """
     requested = list(dict.fromkeys(req.factorIds))
     requested_set = set(requested)
     if req.library == "__all__":
@@ -1838,7 +2134,7 @@ async def delete_factors(req: FactorDeleteRequest):
         if req.marketMode and req.market:
             library_paths = [
                 path for path in library_paths
-                if (scope := _factor_library_scope(path, _load_factor_library(str(path))))["marketMode"] == req.marketMode
+                if (scope := _library_summary(path)["scope"])["marketMode"] == req.marketMode
                 and scope["market"] == req.market
             ]
     elif req.library:
@@ -2040,11 +2336,14 @@ async def get_factor_split_evaluation(
 
 
 @app.get("/api/v1/factors/{factor_id}", response_model=ApiResponse)
-async def get_factor_detail(
+def get_factor_detail(
     factor_id: str,
     library: Optional[str] = Query(None, description="Specific library file name"),
 ):
-    """Get full detail of a single factor."""
+    """Get full detail of a single factor.
+
+    A plain def so the library parse runs on a worker thread, not the event loop.
+    """
     if library:
         if Path(library).name != library:
             raise HTTPException(status_code=400, detail="Invalid factor library filename")
@@ -2091,13 +2390,16 @@ async def get_backtest_config():
 
     def market_date(key: str) -> Optional[str]:
         return dotenv.get(f"{date_prefix}_{key}") or dotenv.get(key)
-    wrds_root = Path(dotenv.get("WRDS_ROOT", "/mnt/d/桌面文件/US stock research/wrds"))
-    kelly_panel = wrds_root / "_quantaalpha_cache" / "kelly_153_sp500.parquet"
-    kelly_report = PROJECT_ROOT / "data" / "kelly" / "jkp_sp500_missingness_1987.json"
+    from quantaalpha.data.kelly_adapter import resolve_kelly_paths
+    kelly_paths = resolve_kelly_paths(dotenv, PROJECT_ROOT)
+    kelly_panel = kelly_paths["panel"]
+    kelly_report = kelly_paths["report_json"]
     kelly_status: Dict[str, Any] = {
         "ready": kelly_panel.exists() and kelly_report.exists(),
         "panelPath": str(kelly_panel),
         "reportPath": str(kelly_report),
+        "sourcePath": str(kelly_paths["source"]),
+        "sourceExists": kelly_paths["source"].exists(),
         "factorCount": 153,
         "thresholdCounts": {},
     }
@@ -2421,11 +2723,12 @@ async def _run_backtest(task_id: str, req: BacktestStartRequest, config_path: st
         task["config"]["retrainMonths"] = retrain_months
         task["config"]["minTrainYears"] = min_train_years
         if req.factorSource == "kelly_jkp":
-            wrds_root = Path(dotenv.get("WRDS_ROOT", "/mnt/d/桌面文件/US stock research/wrds"))
-            panel_path = wrds_root / "_quantaalpha_cache" / "kelly_153_sp500.parquet"
+            from quantaalpha.data.kelly_adapter import resolve_kelly_paths
+            panel_path = resolve_kelly_paths(dotenv, PROJECT_ROOT)["panel"]
             if not panel_path.exists():
                 raise FileNotFoundError(
-                    f"Kelly S&P 500 panel not found: {panel_path}. Build the Kelly cache first."
+                    f"Kelly S&P 500 panel not found: {panel_path}. Build it with "
+                    "`python -m quantaalpha.data.kelly_adapter` from the factorforge directory."
                 )
             output_dir = Path(
                 effective_config.get("experiment", {}).get(
@@ -2686,6 +2989,9 @@ async def get_wrds_status():
     wrds_root = dotenv.get("WRDS_ROOT", "/mnt/d/桌面文件/US stock research/wrds")
     try:
         catalog = await asyncio.to_thread(inspect_wrds, wrds_root)
+        from quantaalpha.data.ibes_adapter import default_ibes_root, inspect_ibes
+        ibes_root = default_ibes_root(wrds_root, dotenv.get("IBES_ROOT"))
+        catalog["ibes"] = await asyncio.to_thread(inspect_ibes, ibes_root)
         qlib_dir = Path(dotenv.get("WRDS_QLIB_DATA_DIR", str(PROJECT_ROOT / "data" / "qlib" / "wrds_sp500")))
         catalog["qlib"] = {
             "path": str(qlib_dir),
@@ -2705,10 +3011,12 @@ async def _run_wrds_build(task_id: str, request: WrdsBuildRequest):
         dotenv = _load_dotenv_dict()
         wrds_root = dotenv.get("WRDS_ROOT", "/mnt/d/桌面文件/US stock research/wrds")
         output = dotenv.get("WRDS_QLIB_DATA_DIR", str(PROJECT_ROOT / "data" / "qlib" / "wrds_sp500"))
+        from quantaalpha.data.ibes_adapter import default_ibes_root
+        ibes_root = default_ibes_root(wrds_root, dotenv.get("IBES_ROOT"))
         task["progress"]["message"] = "正在从 WRDS 流式构建历史 S&P 500 Qlib 数据..."
         metadata = await asyncio.to_thread(
             build_sp500_qlib, wrds_root, output, PROJECT_ROOT,
-            request.startDate, request.endDate,
+            request.startDate, request.endDate, ibes_root=ibes_root,
         )
         task["status"] = "completed"
         task["progress"].update({"progress": 100, "phase": "completed", "message": "WRDS Qlib 数据构建完成"})
@@ -3166,6 +3474,20 @@ def _update_mining_metrics(task: Dict[str, Any]):
     Update mining task metrics from the generated factor library.
     Calculates best factor stats and extracts top 10 factors.
     """
+    task["metrics"].update(_mining_metrics_updates(task))
+
+
+# Metrics derived from a run's library, per file and run settings. The log
+# loop asks after every line that mentions a factor; only a library that
+# changed since the last ask is parsed again.
+_MINING_METRICS = FileStatCache()
+
+
+def _mining_metrics_updates(task: Dict[str, Any]) -> Dict[str, Any]:
+    """The task's metric fields from its factor library; {} when none applies.
+
+    Safe on a worker thread: it reads only the task's config and start time.
+    """
     jsons = _find_factor_jsons()
     # Prefer library with matching suffix if configured
     target_lib = None
@@ -3180,15 +3502,13 @@ def _update_mining_metrics(task: Dict[str, Any]):
             target_lib = str(candidate)
         else:
             # Task specific file not found -> assume empty state
-            return
-            
+            return {}
     elif jsons:
         # No suffix provided, fallback to latest existing library (legacy behavior)
         target_lib = jsons[0]
         
     if not target_lib:
-        return
-
+        return {}
     # Check modification time
     try:
         mtime = os.path.getmtime(target_lib)
@@ -3198,17 +3518,36 @@ def _update_mining_metrics(task: Dict[str, Any]):
             # Add a small buffer (e.g. 1 second) to avoid race conditions where file is created immediately
             if mtime < created_at_dt.timestamp():
                 # File is older than the task -> ignore it
-                return
+                return {}
     except Exception:
         pass
 
+    created_at = task.get("createdAt", "")
+    settings = json.dumps(
+        [created_at, config.get("evaluationFrequencies") or [], config.get("marketMode", "us")],
+        sort_keys=True, default=str,
+    )
+    try:
+        updates = _MINING_METRICS.get(
+            target_lib,
+            lambda path: _compute_mining_metrics(path, config, created_at),
+            extra=settings,
+        )
+    except Exception:
+        return {}  # Best effort, e.g. the library vanished.
+    return dict(updates)
+
+
+def _compute_mining_metrics(target_lib: str, config: Dict[str, Any], created_at_str: str) -> Dict[str, Any]:
+    """Factor counts, best factor and top 10 from one library file."""
+    updates: Dict[str, Any] = {}
     try:
         lib = _load_factor_library(target_lib)
         factors = lib.get("factors", {})
         
         # 1. Update basic stats
         total = len(factors)
-        task["metrics"]["totalFactors"] = total
+        updates["totalFactors"] = total
         
         high = medium = low = 0
         factor_list = []
@@ -3219,7 +3558,6 @@ def _update_mining_metrics(task: Dict[str, Any]):
             # we must ensure we don't display old factors.
             try:
                 added_at_str = f_info.get("added_at", "")
-                created_at_str = task.get("createdAt", "")
                 if added_at_str and created_at_str:
                     # Parse timestamps
                     # added_at usually in isoformat
@@ -3267,6 +3605,10 @@ def _update_mining_metrics(task: Dict[str, Any]):
             cr = annual_ret / abs(max_dd) if max_dd else 0
 
             factor_list.append({
+                # Identify the factor so the UI can link to its own detail page.
+                "factorId": f_id,
+                "library": Path(target_lib).name,
+                "marketMode": factor_market_mode,
                 "factorName": f_info.get("factor_name", f_id),
                 "factorExpression": f_info.get("factor_expression", ""),
                 "quality": q,
@@ -3286,9 +3628,9 @@ def _update_mining_metrics(task: Dict[str, Any]):
                 "calmarRatio": cr,
             })
 
-        task["metrics"]["highQualityFactors"] = high
-        task["metrics"]["mediumQualityFactors"] = medium
-        task["metrics"]["lowQualityFactors"] = low
+        updates["highQualityFactors"] = high
+        updates["mediumQualityFactors"] = medium
+        updates["lowQualityFactors"] = low
         
         # 2. Find best factor
         if factor_list:
@@ -3297,23 +3639,24 @@ def _update_mining_metrics(task: Dict[str, Any]):
             best = factor_list[0]
             
             # Update task metrics with best factor's stats
-            task["metrics"]["annualReturn"] = best["annualReturn"]
-            task["metrics"]["rankIc"] = best["rankIc"]
-            task["metrics"]["sharpeRatio"] = best["sharpeRatio"]
-            task["metrics"]["maxDrawdown"] = best["maxDrawdown"]
-            task["metrics"]["factorName"] = best["factorName"]
+            updates["annualReturn"] = best["annualReturn"]
+            updates["rankIc"] = best["rankIc"]
+            updates["sharpeRatio"] = best["sharpeRatio"]
+            updates["maxDrawdown"] = best["maxDrawdown"]
+            updates["factorName"] = best["factorName"]
             # annualReturn above is this leg's net annualized return (L–S for
             # US/crypto, long-only for A-shares); the UI labels it accordingly.
-            task["metrics"]["bestFactorLeg"] = best.get("preferredPortfolioLeg")
-            task["metrics"]["bestFactorLongReturn"] = (
+            updates["bestFactorLeg"] = best.get("preferredPortfolioLeg")
+            updates["bestFactorLongReturn"] = (
                 (best.get("portfolioStats") or {}).get("long", {}).get("annualizedNetReturn")
             )
             
             # 3. Top 10 Factors
-            task["metrics"]["top10Factors"] = factor_list[:10]
+            updates["top10Factors"] = factor_list[:10]
             
     except Exception:
         pass # Best effort
+    return updates
 
 if __name__ == "__main__":
     import uvicorn

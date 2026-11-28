@@ -1,9 +1,9 @@
 import React from 'react';
-import { Sigma, Database, BarChart3, Settings as SettingsIcon, Languages, Sparkles } from 'lucide-react';
+import { Sigma, Database, BarChart3, History, Settings as SettingsIcon, Languages, Sparkles } from 'lucide-react';
 import { useTaskContext } from '@/context/TaskContext';
 import { useLanguage } from '@/context/LanguageContext';
 
-export type PageId = 'home' | 'library' | 'backtest' | 'settings' | 'mining_dashboard';
+export type PageId = 'home' | 'library' | 'history' | 'backtest' | 'settings' | 'mining_dashboard';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -32,6 +32,7 @@ export const Layout: React.FC<LayoutProps> = ({
   const navItems = [
     { id: 'home' as const, zh: '因子挖掘', en: 'Research', icon: Sparkles },
     { id: 'library' as const, zh: '因子库', en: 'Library', icon: Database },
+    { id: 'history' as const, zh: '运行历史', en: 'History', icon: History },
     { id: 'backtest' as const, zh: '组合回测', en: 'Backtest', icon: BarChart3 },
     { id: 'settings' as const, zh: '系统设置', en: 'Settings', icon: SettingsIcon },
   ];
@@ -109,7 +110,7 @@ export const Layout: React.FC<LayoutProps> = ({
           </div>
         </div>
       {showNavigation && (
-        <nav aria-label={language === 'zh' ? '模块导航' : 'Module navigation'} className="grid grid-cols-4 gap-1 border-t border-white/10 px-3 py-2 md:hidden">
+        <nav aria-label={language === 'zh' ? '模块导航' : 'Module navigation'} className="grid grid-cols-5 gap-1 border-t border-white/10 px-3 py-2 md:hidden">
           {navItems.map(item => (
             <button type="button" key={item.id} onClick={() => handleNavClick(item.id)}
               className={`rounded-lg px-1 py-2 text-xs ${currentPage === item.id || (item.id === 'home' && currentPage === 'mining_dashboard') ? 'bg-[#a7f3d0] text-[#071b24]' : 'text-slate-300'}`}>

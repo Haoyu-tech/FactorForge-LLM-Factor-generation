@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 from jinja2 import Environment, StrictUndefined
 
+from quantaalpha.coder.costeer.evolvable_subjects import EvolvingItem
 from quantaalpha.coder.costeer.evolving_strategy import (
     MultiProcessEvolvingStrategy,
 )

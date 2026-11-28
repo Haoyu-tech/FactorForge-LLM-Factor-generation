@@ -28,8 +28,9 @@ import {
   healthCheck,
   ApiError,
 } from '@/services/api';
-import type { BacktestStartParams } from '@/services/api';
+import type { BacktestStartParams, MiningStartParams } from '@/services/api';
 import { getDefaultMiningDirection } from '@/utils/miningDirections';
+import { marketSelectionFrom } from '@/utils/marketSettings';
 import { isTerminalStatus, pickCurrentMiningTask } from '@/utils/taskSelection';
 
 // ========================== Backtest local type ==========================
@@ -324,7 +325,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }, 10000);
     },
-    [handleMiningWsMessage],
+    [handleMiningWsMessage, detachMiningStream],
   );
 
   // Start mining (real backend)
@@ -345,7 +346,8 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
           config.useCustomMiningDirection
             ? (getDefaultMiningDirection() || '价量因子挖掘')
             : (config.userInput && config.userInput.trim()) || getDefaultMiningDirection() || '价量因子挖掘';
-        const marketMode: 'us' | 'cn' | 'crypto' = defaults.marketMode === 'crypto' ? 'crypto' : (defaults.marketMode === 'cn' ? 'cn' : 'us');
+        const selection = marketSelectionFrom(defaults);
+        const marketMode = selection.marketMode;
         const marketDates = defaults.marketDateRanges?.[marketMode] || defaults;
         const resp = await apiStartMining({
           direction,
@@ -356,9 +358,9 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
           miningLightgbmEnabled: defaults.miningLightgbmEnabled ?? false,
           parallelEnabled: config.parallelExecution ?? defaults.parallelExecution ?? false,
           evaluationFrequencies: defaults.evaluationFrequencies || ['day'],
-          dataSource: marketMode === 'crypto' ? 'binance_futures' : (marketMode === 'cn' ? 'cn_duckdb' : (defaults.dataSource || 'wrds')),
+          dataSource: selection.dataSource,
           marketMode,
-          market: defaults.defaultMarket || (marketMode === 'crypto' ? 'binance_usdm' : (marketMode === 'cn' ? 'csi300' : 'sp500')),
+          market: selection.market as MiningStartParams['market'],
           excludeSt: defaults.cnExcludeSt ?? true,
           excludeNewStocks: defaults.cnExcludeNewStocks ?? true,
           excludeChiNext: defaults.cnExcludeChiNext ?? false,

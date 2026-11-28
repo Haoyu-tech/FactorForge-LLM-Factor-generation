@@ -5,6 +5,8 @@ import { ChatInput } from '@/components/ChatInput';
 import { FactorStatsRow } from '@/components/FactorStatsRow';
 import { FactorList } from '@/components/FactorList';
 import { FactorRadarChart } from '@/components/FactorRadarChart';
+import { RoundFeedbackPanel } from '@/components/RoundFeedbackPanel';
+import { experimentIdForTask } from '@/services/api';
 import { useTaskContext } from '@/context/TaskContext';
 import { Layout } from '@/components/layout/Layout';
 import type { PageId } from '@/components/layout/Layout';
@@ -96,6 +98,13 @@ export const MiningDashboardPage: React.FC<MiningDashboardPageProps> = ({ onNavi
         </div>
         <div className="lg:col-span-4">
            <FactorList metrics={task.metrics || null} />
+        </div>
+        <div className="lg:col-span-4">
+           <RoundFeedbackPanel
+             experimentId={experimentIdForTask(task)}
+             isRunning={task.status === 'running'}
+             marketMode={task.config?.marketMode}
+           />
         </div>
       </div>
 

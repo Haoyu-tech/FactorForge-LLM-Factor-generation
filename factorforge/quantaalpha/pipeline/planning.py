@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -55,15 +56,28 @@ def _fallback_directions(initial_direction: str, n: int) -> list[str]:
         f"{base} + volatility regime switch using rolling variance",
         f"{base} + liquidity/turnover adjustment for noise reduction",
         f"{base} + cross-sectional rank with sector-neutralization",
-        f"{base} + intraday reversal vs overnight drift decomposition",
-        f"{base} + fundamental proxy alignment (price-to-book, earnings momentum)",
+        f"{base} + open-to-close versus close-to-open return decomposition",
         f"{base} + calendar effects and seasonality-aware normalization",
         f"{base} + risk-adjusted return features (downside volatility focus)",
     ]
+    if os.environ.get("MARKET_MODE", "us").strip().lower() != "crypto":
+        # Equity stores carry point-in-time fundamentals; crypto stores do not.
+        patterns.insert(5, f"{base} + alignment with stored point-in-time fundamentals")
     out = []
     for i in range(n):
         out.append(patterns[i % len(patterns)])
     return out
+
+
+def _stored_field_catalog() -> str:
+    """Describe the fields in the Qlib store this run reads (QLIB_DATA_DIR)."""
+    try:
+        from quantaalpha.research.data_feasibility import field_catalog_text, store_fields
+
+        return field_catalog_text(store_fields(os.environ.get("QLIB_DATA_DIR")))
+    except Exception as exc:
+        logger.warning(f"Could not list stored fields for planning: {exc}")
+        return ""
 
 
 def generate_parallel_directions(
@@ -73,6 +87,7 @@ def generate_parallel_directions(
     max_attempts: int = 5,
     use_llm: bool = True,
     allow_fallback: bool = True,
+    data_catalog: str | None = None,
 ) -> list[str]:
     n = max(1, int(n))
     prompts = _load_prompts(prompt_file)
@@ -82,6 +97,16 @@ def generate_parallel_directions(
 
     system_prompt = sys_tpl.format(initial_direction=initial_direction, n=n)
     user_prompt = user_tpl.format(initial_direction=initial_direction, n=n)
+    catalog = data_catalog if data_catalog is not None else _stored_field_catalog()
+    if catalog:
+        # Without the field list the planner proposes directions that need data
+        # the store lacks, and later steps fill the gap with stand-ins.
+        user_prompt += (
+            "\n\nThe database holds ONLY these daily fields:\n" + catalog
+            + "\nEvery direction must be testable with these fields alone. Do not propose directions "
+            "that need other data (analyst forecasts, options, news, intraday, on-chain, ...), and do "
+            "not relabel a price or volume pattern as such data."
+        )
     if output_format:
         if "{n}" in output_format:
             output_format = output_format.replace("{n}", str(n))

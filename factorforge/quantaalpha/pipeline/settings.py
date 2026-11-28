@@ -93,23 +93,6 @@ class FactorFromReportPropSetting(FactorBasePropSetting):
 
 
 # =============================================================================
-# Model experiment settings (contrib, optional)
-# =============================================================================
-
-class ModelBasePropSetting(BasePropSetting):
-    """Model experiment (extended feature)."""
-    model_config = ExtendedSettingsConfigDict(env_prefix="QLIB_MODEL_", protected_namespaces=())
-
-    scen: str = "quantaalpha.contrib.model.experiment.QlibModelScenario"
-    hypothesis_gen: str = "quantaalpha.contrib.model.proposal.QlibModelHypothesisGen"
-    hypothesis2experiment: str = "quantaalpha.contrib.model.proposal.QlibModelHypothesis2Experiment"
-    coder: str = "quantaalpha.contrib.model.qlib_coder.QlibModelCoSTEER"
-    runner: str = "quantaalpha.contrib.model.runner.QlibModelRunner"
-    summarizer: str = "quantaalpha.factors.feedback.QlibModelHypothesisExperiment2Feedback"
-    evolving_n: int = 10
-
-
-# =============================================================================
 # Singleton instances (global)
 # =============================================================================
 
@@ -117,4 +100,3 @@ ALPHA_AGENT_FACTOR_PROP_SETTING = AlphaAgentFactorBasePropSetting()
 FACTOR_PROP_SETTING = FactorBasePropSetting()
 FACTOR_BACK_TEST_PROP_SETTING = FactorBackTestBasePropSetting()
 FACTOR_FROM_REPORT_PROP_SETTING = FactorFromReportPropSetting()
-MODEL_PROP_SETTING = ModelBasePropSetting()
