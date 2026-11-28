@@ -37,6 +37,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 DOTENV_PATH = PROJECT_ROOT / ".env"
 
+from quantaalpha.utils.file_cache import FileStatCache  # noqa: E402  (needs PROJECT_ROOT on sys.path)
+
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
@@ -684,12 +686,60 @@ async def prune_stale_factor_split_caches_on_startup() -> None:
             f"{len(result['changedLibraries'])} factor libraries",
             flush=True,
         )
+    # Fill the factor-list cache in the background, so the first page load
+    # after a restart does not wait for every library to be parsed.
+    warm = asyncio.get_running_loop().create_task(asyncio.to_thread(_warm_library_summaries))
+    _BACKGROUND_TASKS.add(warm)  # the loop keeps only a weak reference
+    warm.add_done_callback(_BACKGROUND_TASKS.discard)
+
+
+_BACKGROUND_TASKS: set = set()
+
+
+def _warm_library_summaries() -> None:
+    for path in _find_factor_jsons():
+        try:
+            _library_summary(path)
+        except Exception:
+            continue
 
 
 def _load_factor_library(path: str) -> Dict[str, Any]:
     """Load a factor library, tolerating a complete document plus a torn tail."""
     from quantaalpha.factors.library import _decode_library_text
     return _decode_library_text(Path(path).read_text(encoding="utf-8"))
+
+
+# Each library's market and its factors' list rows, rebuilt only when the file
+# changes. Parsing every library (hundreds of MB) on each factor-list request
+# held the server for seconds, so even /api/health waited behind it.
+_LIBRARY_SUMMARIES = FileStatCache()
+
+
+def _library_summary(path: str | Path) -> Dict[str, Any]:
+    """{"scope", "metadata", "rows": [(identity, list entry)]} for one library.
+
+    The value is shared between requests: read it, never mutate it.
+    """
+    return _LIBRARY_SUMMARIES.get(path, _build_library_summary)
+
+
+def _build_library_summary(path: str) -> Dict[str, Any]:
+    raw = _load_factor_library(path)
+    scope = _factor_library_scope(path, raw)
+    metadata = raw.get("metadata", {})
+    name = Path(path).name
+    rows = []
+    for factor_id, factor_info in (raw.get("factors") or {}).items():
+        if not isinstance(factor_info, dict):
+            continue
+        # The same factor can sit in several historical snapshots; the
+        # all-history view keeps the newest copy of each identity.
+        canonical_id = str(factor_info.get("factor_id") or factor_id).strip()
+        expression = str(factor_info.get("factor_expression") or "").strip()
+        identity = ("id", canonical_id) if canonical_id else ("expression", expression)
+        rows.append((identity, _factor_list_entry(factor_id, factor_info, name, scope, metadata)))
+    return {"scope": scope, "metadata": metadata, "rows": rows}
 
 
 def _assess_quality(factor_info: Dict[str, Any]) -> Dict[str, Any]:
@@ -1261,7 +1311,8 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
             
             # Check for factor saving to update top factors list
             if "已保存" in line or "因子" in line:
-                _update_mining_metrics(task)
+                # Read the library off the event loop; apply the result here.
+                task["metrics"].update(await asyncio.to_thread(_mining_metrics_updates, task))
                 if task.get("metrics"):
                      await _broadcast(task_id, {
                         "type": "result",
@@ -1295,7 +1346,7 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
 
         # Load final factor count from the library JSON
         # Prefer the library file matching the librarySuffix for this experiment
-        _update_mining_metrics(task)
+        task["metrics"].update(await asyncio.to_thread(_mining_metrics_updates, task))
 
         await _broadcast(task_id, {
             "type": "result",
@@ -1684,8 +1735,80 @@ async def list_tasks():
 
 # ---- Factor library endpoints ----
 
+def _factor_list_entry(
+    factor_id: str,
+    factor_info: Dict[str, Any],
+    source_library: str,
+    scope: Dict[str, str],
+    metadata: Dict[str, Any],
+) -> Dict[str, Any]:
+    """One factor's row in the factor list, with quality and headline metrics."""
+    bt = factor_info.get("backtest_results", {})
+    factor_market_mode = factor_info.get("market_mode") or scope.get("marketMode", "us")
+    quality_assessment = _assess_quality({
+        **factor_info,
+        "market_mode": factor_market_mode,
+    })
+    q = quality_assessment["quality"]
+    # Extract metrics with proper fallbacks
+    # Try specific keys first, then standard ones
+    ic = bt.get("IC", bt.get("1day.excess_return_without_cost.information_coefficient", 0))
+    icir = bt.get("ICIR", bt.get("1day.excess_return_without_cost.information_coefficient_ir", 0))
+    rank_ic = bt.get("Rank IC", bt.get("rank_ic", bt.get("1day.excess_return_without_cost.rank_ic", 0)))
+    rank_icir = bt.get("Rank ICIR", bt.get("rank_ic_ir", bt.get("1day.excess_return_without_cost.rank_ic_ir", 0)))
+
+    frequency = _factor_frequency(bt)
+    portfolio_stats = _portfolio_statistics(bt, frequency)
+    asset_pricing = _asset_pricing_statistics(bt, frequency)
+    industry_statistics = _industry_statistics(bt, frequency)
+    preferred_leg = "long" if factor_market_mode == "cn" else "long_short"
+    preferred_portfolio = portfolio_stats.get(preferred_leg, {})
+    legacy_annual_return = bt.get("1day.excess_return_with_cost.annualized_return",
+                                  bt.get("1day.excess_return_without_cost.annualized_return", 0))
+    legacy_max_drawdown = bt.get("1day.excess_return_with_cost.max_drawdown",
+                                 bt.get("1day.excess_return_without_cost.max_drawdown", 0))
+    legacy_sharpe = bt.get("1day.excess_return_with_cost.information_ratio",
+                           bt.get("1day.excess_return_without_cost.information_ratio", 0))
+
+    factor_entry = {
+        "factorId": factor_info.get("factor_id", factor_id),
+        "factorName": factor_info.get("factor_name", "Unknown"),
+        "factorExpression": factor_info.get("factor_expression", ""),
+        "factorDescription": factor_info.get("factor_description", ""),
+        "factorFormulation": factor_info.get("factor_formulation", ""),
+        "llmExplanation": factor_info.get("llm_explanation", {}),
+        "quality": q,
+        "qualityScore": quality_assessment["score"],
+        "qualityAssessment": quality_assessment,
+        "backtestResults": bt,
+        "splitResults": _valid_factor_split_results(factor_info, metadata, factor_market_mode),
+        # Extract key metrics
+        "ic": ic,
+        "icir": icir,
+        "rankIc": rank_ic,
+        "rankIcir": rank_icir,
+        "frequency": frequency,
+        "portfolioStats": portfolio_stats,
+        "assetPricing": asset_pricing,
+        "industryStatistics": industry_statistics,
+        "preferredPortfolioLeg": preferred_leg,
+        "annualReturn": preferred_portfolio.get("annualizedNetReturn") if preferred_portfolio.get("annualizedNetReturn") is not None else legacy_annual_return,
+        "maxDrawdown": preferred_portfolio.get("maxDrawdown") if preferred_portfolio.get("maxDrawdown") is not None else legacy_max_drawdown,
+        "sharpeRatio": preferred_portfolio.get("sharpeRatio") if preferred_portfolio.get("sharpeRatio") is not None else legacy_sharpe,
+        "round": factor_info.get("evolution_metadata", {}).get("round", 0)
+        if isinstance(factor_info.get("evolution_metadata"), dict) else 0,
+        "direction": factor_info.get("evolution_metadata", {}).get("direction_index", "")
+        if isinstance(factor_info.get("evolution_metadata"), dict) else "",
+        "createdAt": factor_info.get("added_at", ""),
+        "sourceLibrary": source_library,
+        "marketMode": factor_market_mode,
+        "market": factor_info.get("market") or scope.get("market", "sp500"),
+    }
+    return factor_entry
+
+
 @app.get("/api/v1/factors", response_model=ApiResponse)
-async def get_factors(
+def get_factors(
     quality: Optional[str] = Query(None, description="Filter by quality: high/medium/low"),
     search: Optional[str] = Query(None, description="Search by factor name"),
     limit: int = Query(100, ge=1, le=5000),
@@ -1694,16 +1817,18 @@ async def get_factors(
     marketMode: str = Query("us", pattern="^(us|cn|crypto)$"),
     market: str = Query("sp500", pattern="^(sp500|csi300|csi500|sme_composite|binance_usdm)$"),
 ):
-    """Get factors from the factor library JSON."""
+    """Get factors from the factor library JSON.
+
+    A plain def, so FastAPI runs it on a worker thread: reading a library the
+    cache has not seen yet must not stall other requests.
+    """
     all_library_paths = _find_factor_jsons()
+    _LIBRARY_SUMMARIES.retain(all_library_paths)
     library_scopes: List[Dict[str, Any]] = []
     scope_by_name: Dict[str, Dict[str, str]] = {}
-    payload_by_name: Dict[str, Dict[str, Any]] = {}
     for path in all_library_paths:
         try:
-            loaded_library = _load_factor_library(path)
-            payload_by_name[Path(path).name] = loaded_library
-            scope = _factor_library_scope(path, loaded_library)
+            scope = _library_summary(path)["scope"]
         except Exception:
             scope = _factor_library_scope(path)
         descriptor = {"filename": Path(path).name, **scope}
@@ -1722,28 +1847,23 @@ async def get_factors(
                   "activeScope": {"marketMode": marketMode, "market": market}},
         )
 
-    factor_records: List[tuple[str, Dict[str, Any], str]] = []
+    factors_list: List[Dict[str, Any]] = []
     if library == "__all__":
         # Files are newest first. Keep the newest copy when a factor appears in
         # more than one historical snapshot.
         seen = set()
         for path in library_paths:
             try:
-                historical = _load_factor_library(path)
+                rows = _library_summary(path)["rows"]
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=f"Failed to read factor library: {exc}")
-            for factor_id, factor_info in historical.get("factors", {}).items():
-                if not isinstance(factor_info, dict):
-                    continue
-                canonical_id = str(factor_info.get("factor_id") or factor_id).strip()
-                expression = str(factor_info.get("factor_expression") or "").strip()
-                identity = ("id", canonical_id) if canonical_id else ("expression", expression)
+            for identity, entry in rows:
                 if identity in seen:
                     continue
                 seen.add(identity)
-                factor_records.append((factor_id, factor_info, Path(path).name))
+                factors_list.append(entry)
         metadata = {
-            "total_factors": len(factor_records),
+            "total_factors": len(factors_list),
             "library_count": len(library_paths),
             "all_history": True,
             "last_updated": datetime.fromtimestamp(max(os.path.getmtime(path) for path in library_paths)).isoformat(),
@@ -1757,7 +1877,7 @@ async def get_factors(
                 legacy_path = PROJECT_ROOT / library
                 lib_path = legacy_path if legacy_path.exists() else lib_path
             if lib_path.exists():
-                selected_scope = _factor_library_scope(lib_path, _load_factor_library(str(lib_path)))
+                selected_scope = _library_summary(lib_path)["scope"]
                 if selected_scope["marketMode"] != marketMode or selected_scope["market"] != market:
                     raise HTTPException(status_code=400, detail="Factor library does not belong to the selected market")
         else:
@@ -1765,90 +1885,11 @@ async def get_factors(
         if not lib_path.exists():
             raise HTTPException(status_code=404, detail="Factor library not found")
         try:
-            raw = _load_factor_library(str(lib_path))
+            summary = _library_summary(lib_path)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Failed to read factor library: {exc}")
-        metadata = raw.get("metadata", {})
-        factor_records = [
-            (factor_id, factor_info, lib_path.name)
-            for factor_id, factor_info in raw.get("factors", {}).items()
-            if isinstance(factor_info, dict)
-        ]
-
-    # Convert dict to list with quality classification
-    factors_list: List[Dict[str, Any]] = []
-    for factor_id, factor_info, source_library in factor_records:
-        if not isinstance(factor_info, dict):
-            continue
-        bt = factor_info.get("backtest_results", {})
-        factor_market_mode = (
-            factor_info.get("market_mode")
-            or scope_by_name.get(source_library, {}).get("marketMode", "us")
-        )
-        quality_assessment = _assess_quality({
-            **factor_info,
-            "market_mode": factor_market_mode,
-        })
-        q = quality_assessment["quality"]
-        # Extract metrics with proper fallbacks
-        # Try specific keys first, then standard ones
-        ic = bt.get("IC", bt.get("1day.excess_return_without_cost.information_coefficient", 0))
-        icir = bt.get("ICIR", bt.get("1day.excess_return_without_cost.information_coefficient_ir", 0))
-        rank_ic = bt.get("Rank IC", bt.get("rank_ic", bt.get("1day.excess_return_without_cost.rank_ic", 0)))
-        rank_icir = bt.get("Rank ICIR", bt.get("rank_ic_ir", bt.get("1day.excess_return_without_cost.rank_ic_ir", 0)))
-        
-        frequency = _factor_frequency(bt)
-        portfolio_stats = _portfolio_statistics(bt, frequency)
-        asset_pricing = _asset_pricing_statistics(bt, frequency)
-        industry_statistics = _industry_statistics(bt, frequency)
-        preferred_leg = "long" if factor_market_mode == "cn" else "long_short"
-        preferred_portfolio = portfolio_stats.get(preferred_leg, {})
-        legacy_annual_return = bt.get("1day.excess_return_with_cost.annualized_return",
-                                      bt.get("1day.excess_return_without_cost.annualized_return", 0))
-        legacy_max_drawdown = bt.get("1day.excess_return_with_cost.max_drawdown",
-                                     bt.get("1day.excess_return_without_cost.max_drawdown", 0))
-        legacy_sharpe = bt.get("1day.excess_return_with_cost.information_ratio",
-                               bt.get("1day.excess_return_without_cost.information_ratio", 0))
-
-        factor_entry = {
-            "factorId": factor_info.get("factor_id", factor_id),
-            "factorName": factor_info.get("factor_name", "Unknown"),
-            "factorExpression": factor_info.get("factor_expression", ""),
-            "factorDescription": factor_info.get("factor_description", ""),
-            "factorFormulation": factor_info.get("factor_formulation", ""),
-            "llmExplanation": factor_info.get("llm_explanation", {}),
-            "quality": q,
-            "qualityScore": quality_assessment["score"],
-            "qualityAssessment": quality_assessment,
-            "backtestResults": bt,
-            "splitResults": _valid_factor_split_results(
-                factor_info,
-                (payload_by_name.get(source_library) or {}).get("metadata", {}),
-                factor_market_mode,
-            ),
-            # Extract key metrics
-            "ic": ic,
-            "icir": icir,
-            "rankIc": rank_ic,
-            "rankIcir": rank_icir,
-            "frequency": frequency,
-            "portfolioStats": portfolio_stats,
-            "assetPricing": asset_pricing,
-            "industryStatistics": industry_statistics,
-            "preferredPortfolioLeg": preferred_leg,
-            "annualReturn": preferred_portfolio.get("annualizedNetReturn") if preferred_portfolio.get("annualizedNetReturn") is not None else legacy_annual_return,
-            "maxDrawdown": preferred_portfolio.get("maxDrawdown") if preferred_portfolio.get("maxDrawdown") is not None else legacy_max_drawdown,
-            "sharpeRatio": preferred_portfolio.get("sharpeRatio") if preferred_portfolio.get("sharpeRatio") is not None else legacy_sharpe,
-            "round": factor_info.get("evolution_metadata", {}).get("round", 0)
-            if isinstance(factor_info.get("evolution_metadata"), dict) else 0,
-            "direction": factor_info.get("evolution_metadata", {}).get("direction_index", "")
-            if isinstance(factor_info.get("evolution_metadata"), dict) else "",
-            "createdAt": factor_info.get("added_at", ""),
-            "sourceLibrary": source_library,
-            "marketMode": factor_market_mode,
-            "market": factor_info.get("market") or scope_by_name.get(source_library, {}).get("market", "sp500"),
-        }
-        factors_list.append(factor_entry)
+        metadata = summary["metadata"]
+        factors_list = [entry for _, entry in summary["rows"]]
 
     # Apply filters
     if quality:
@@ -2081,8 +2122,11 @@ async def list_factor_libraries():
 
 
 @app.post("/api/v1/factors/delete", response_model=ApiResponse)
-async def delete_factors(req: FactorDeleteRequest):
-    """Delete selected factors atomically from one library or all history."""
+def delete_factors(req: FactorDeleteRequest):
+    """Delete selected factors atomically from one library or all history.
+
+    A plain def so the library reads and rewrites run on a worker thread.
+    """
     requested = list(dict.fromkeys(req.factorIds))
     requested_set = set(requested)
     if req.library == "__all__":
@@ -2090,7 +2134,7 @@ async def delete_factors(req: FactorDeleteRequest):
         if req.marketMode and req.market:
             library_paths = [
                 path for path in library_paths
-                if (scope := _factor_library_scope(path, _load_factor_library(str(path))))["marketMode"] == req.marketMode
+                if (scope := _library_summary(path)["scope"])["marketMode"] == req.marketMode
                 and scope["market"] == req.market
             ]
     elif req.library:
@@ -2292,11 +2336,14 @@ async def get_factor_split_evaluation(
 
 
 @app.get("/api/v1/factors/{factor_id}", response_model=ApiResponse)
-async def get_factor_detail(
+def get_factor_detail(
     factor_id: str,
     library: Optional[str] = Query(None, description="Specific library file name"),
 ):
-    """Get full detail of a single factor."""
+    """Get full detail of a single factor.
+
+    A plain def so the library parse runs on a worker thread, not the event loop.
+    """
     if library:
         if Path(library).name != library:
             raise HTTPException(status_code=400, detail="Invalid factor library filename")
@@ -3427,6 +3474,20 @@ def _update_mining_metrics(task: Dict[str, Any]):
     Update mining task metrics from the generated factor library.
     Calculates best factor stats and extracts top 10 factors.
     """
+    task["metrics"].update(_mining_metrics_updates(task))
+
+
+# Metrics derived from a run's library, per file and run settings. The log
+# loop asks after every line that mentions a factor; only a library that
+# changed since the last ask is parsed again.
+_MINING_METRICS = FileStatCache()
+
+
+def _mining_metrics_updates(task: Dict[str, Any]) -> Dict[str, Any]:
+    """The task's metric fields from its factor library; {} when none applies.
+
+    Safe on a worker thread: it reads only the task's config and start time.
+    """
     jsons = _find_factor_jsons()
     # Prefer library with matching suffix if configured
     target_lib = None
@@ -3441,15 +3502,13 @@ def _update_mining_metrics(task: Dict[str, Any]):
             target_lib = str(candidate)
         else:
             # Task specific file not found -> assume empty state
-            return
-            
+            return {}
     elif jsons:
         # No suffix provided, fallback to latest existing library (legacy behavior)
         target_lib = jsons[0]
         
     if not target_lib:
-        return
-
+        return {}
     # Check modification time
     try:
         mtime = os.path.getmtime(target_lib)
@@ -3459,17 +3518,36 @@ def _update_mining_metrics(task: Dict[str, Any]):
             # Add a small buffer (e.g. 1 second) to avoid race conditions where file is created immediately
             if mtime < created_at_dt.timestamp():
                 # File is older than the task -> ignore it
-                return
+                return {}
     except Exception:
         pass
 
+    created_at = task.get("createdAt", "")
+    settings = json.dumps(
+        [created_at, config.get("evaluationFrequencies") or [], config.get("marketMode", "us")],
+        sort_keys=True, default=str,
+    )
+    try:
+        updates = _MINING_METRICS.get(
+            target_lib,
+            lambda path: _compute_mining_metrics(path, config, created_at),
+            extra=settings,
+        )
+    except Exception:
+        return {}  # Best effort, e.g. the library vanished.
+    return dict(updates)
+
+
+def _compute_mining_metrics(target_lib: str, config: Dict[str, Any], created_at_str: str) -> Dict[str, Any]:
+    """Factor counts, best factor and top 10 from one library file."""
+    updates: Dict[str, Any] = {}
     try:
         lib = _load_factor_library(target_lib)
         factors = lib.get("factors", {})
         
         # 1. Update basic stats
         total = len(factors)
-        task["metrics"]["totalFactors"] = total
+        updates["totalFactors"] = total
         
         high = medium = low = 0
         factor_list = []
@@ -3480,7 +3558,6 @@ def _update_mining_metrics(task: Dict[str, Any]):
             # we must ensure we don't display old factors.
             try:
                 added_at_str = f_info.get("added_at", "")
-                created_at_str = task.get("createdAt", "")
                 if added_at_str and created_at_str:
                     # Parse timestamps
                     # added_at usually in isoformat
@@ -3551,9 +3628,9 @@ def _update_mining_metrics(task: Dict[str, Any]):
                 "calmarRatio": cr,
             })
 
-        task["metrics"]["highQualityFactors"] = high
-        task["metrics"]["mediumQualityFactors"] = medium
-        task["metrics"]["lowQualityFactors"] = low
+        updates["highQualityFactors"] = high
+        updates["mediumQualityFactors"] = medium
+        updates["lowQualityFactors"] = low
         
         # 2. Find best factor
         if factor_list:
@@ -3562,23 +3639,24 @@ def _update_mining_metrics(task: Dict[str, Any]):
             best = factor_list[0]
             
             # Update task metrics with best factor's stats
-            task["metrics"]["annualReturn"] = best["annualReturn"]
-            task["metrics"]["rankIc"] = best["rankIc"]
-            task["metrics"]["sharpeRatio"] = best["sharpeRatio"]
-            task["metrics"]["maxDrawdown"] = best["maxDrawdown"]
-            task["metrics"]["factorName"] = best["factorName"]
+            updates["annualReturn"] = best["annualReturn"]
+            updates["rankIc"] = best["rankIc"]
+            updates["sharpeRatio"] = best["sharpeRatio"]
+            updates["maxDrawdown"] = best["maxDrawdown"]
+            updates["factorName"] = best["factorName"]
             # annualReturn above is this leg's net annualized return (L–S for
             # US/crypto, long-only for A-shares); the UI labels it accordingly.
-            task["metrics"]["bestFactorLeg"] = best.get("preferredPortfolioLeg")
-            task["metrics"]["bestFactorLongReturn"] = (
+            updates["bestFactorLeg"] = best.get("preferredPortfolioLeg")
+            updates["bestFactorLongReturn"] = (
                 (best.get("portfolioStats") or {}).get("long", {}).get("annualizedNetReturn")
             )
             
             # 3. Top 10 Factors
-            task["metrics"]["top10Factors"] = factor_list[:10]
+            updates["top10Factors"] = factor_list[:10]
             
     except Exception:
         pass # Best effort
+    return updates
 
 if __name__ == "__main__":
     import uvicorn
